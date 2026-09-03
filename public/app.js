@@ -33,12 +33,14 @@ async function loadMenu(){
 const stateLabel=(ok,yes,no='Non disponibile')=>ok===true?`<span class="state good">${yes}</span>`:ok===false?`<span class="state bad">${no}</span>`:`<span class="state neutral">N/D</span>`;
 async function loadTelephony(){
   const [status,usage]=await Promise.all([request('/api/telephony/status'),request('/api/usage/monthly')]);
-  document.querySelector('#overallStatus').innerHTML=`<i></i> ${status.asteriskOnline&&status.sipRegistration==='registered'?'Centralino collegato':'Stato da verificare'}`;
-  document.querySelector('#telephonyChecked').textContent=`Ultimo controllo: ${status.heartbeatStale?'N/D':new Intl.DateTimeFormat('it-CH',{dateStyle:'short',timeStyle:'short'}).format(new Date(status.checkedAt))}`;
+  const heartbeatLabel=status.heartbeatState==='stale'?'Heartbeat STALE':status.heartbeatState==='unknown'?'Stato da verificare':status.asteriskOnline&&status.sipRegistration==='registered'?'Centralino collegato':'Problema telefonia';
+  document.querySelector('#overallStatus').innerHTML=`<i></i> ${heartbeatLabel}`;
+  document.querySelector('#telephonyChecked').textContent=`Ultimo controllo: ${status.checkedAt?new Intl.DateTimeFormat('it-CH',{dateStyle:'short',timeStyle:'short'}).format(new Date(status.checkedAt)):'N/D'}`;
+  const heartbeatUnavailable=status.heartbeatState==='stale'?'<span class="state stale">STALE</span>':'<span class="state neutral">N/D</span>';
   document.querySelector('#telephonyCards').innerHTML=[
     ['Numero',`${esc(status.number)} · ${esc(status.provider)} ${esc(status.plan)}`],
-    ['Asterisk',stateLabel(status.asteriskOnline,'Online','Offline')],
-    ['Registrazione SIP',stateLabel(status.sipRegistration==='registered','Registrata',status.sipRegistration==='unregistered'?'Non registrata':'N/D')],
+    ['Asterisk',status.heartbeatState==='current'?stateLabel(status.asteriskOnline,'Online','Offline'):heartbeatUnavailable],
+    ['Registrazione SIP',status.heartbeatState==='current'?stateLabel(status.sipRegistration==='registered','Registrata',status.sipRegistration==='unregistered'?'Non registrata':'N/D'):heartbeatUnavailable],
     ['OpenAI Realtime',stateLabel(status.openaiRealtime==='ready','Configurato','In attesa')],
     ['Backend',stateLabel(status.backendOnline,'Online','Offline')],
     ['PostgreSQL',stateLabel(status.databaseOnline,'Connesso','Non connesso')]

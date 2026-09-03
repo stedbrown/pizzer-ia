@@ -20,12 +20,17 @@ describe('HTTP application', () => {
   });
   it('authenticates the telephony heartbeat and reports current status', async () => {
     expect((await app.inject({ method: 'POST', url: '/api/telephony/heartbeat', payload: {} })).statusCode).toBe(401);
+    const unknown = await app.inject({ method: 'GET', url: '/api/telephony/status', headers: auth });
+    expect(unknown.json()).toMatchObject({ heartbeatState: 'unknown', checkedAt: null });
     const checkedAt = new Date().toISOString();
     const heartbeat = await app.inject({ method: 'POST', url: '/api/telephony/heartbeat', headers: { 'x-heartbeat-token': 'heartbeat-test' }, payload: { asteriskOnline: true, sipRegistration: 'registered', version: 'Asterisk 22.5.2', checkedAt } });
     expect(heartbeat.statusCode).toBe(200);
     const response = await app.inject({ method: 'GET', url: '/api/telephony/status', headers: auth });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ provider: 'sipcall', plan: 'Classic', asteriskOnline: true, sipRegistration: 'registered', heartbeatStale: false });
+    expect(response.json()).toMatchObject({ provider: 'sipcall', plan: 'Classic', asteriskOnline: true, sipRegistration: 'registered', heartbeatState: 'current' });
+    await store.updateTelephonyStatus('restaurant-demo', { asteriskOnline: true, sipRegistration: 'registered', checkedAt: new Date(Date.now() - 91_000).toISOString() });
+    const stale = await app.inject({ method: 'GET', url: '/api/telephony/status', headers: auth });
+    expect(stale.json()).toMatchObject({ heartbeatState: 'stale', asteriskOnline: null, sipRegistration: 'unknown' });
   });
   it('reports zero monthly usage without inventing costs', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/usage/monthly', headers: auth });

@@ -76,14 +76,17 @@ export function buildApp(options: AppOptions) {
   });
   app.get('/api/telephony/status', { preHandler: auth }, async () => {
     const status = await options.store.getTelephonyStatus(DEMO_RESTAURANT_ID);
-    const stale = Date.now() - Date.parse(status.checkedAt) > 180_000;
+    const checkedAtMs = Date.parse(status.checkedAt);
+    const neverReceived = !Number.isFinite(checkedAtMs) || checkedAtMs <= 0;
+    const stale = !neverReceived && Date.now() - checkedAtMs > 90_000;
+    const heartbeatState = neverReceived ? 'unknown' : stale ? 'stale' : 'current';
     let databaseOnline = true;
     try { await options.store.health(); } catch { databaseOnline = false; }
     return {
       provider: 'sipcall', plan: 'Classic', number: '091 210 20 49',
       asteriskOnline: stale ? null : status.asteriskOnline,
       sipRegistration: stale ? 'unknown' : status.sipRegistration,
-      version: status.version, checkedAt: status.checkedAt, heartbeatStale: stale,
+      version: status.version, checkedAt: neverReceived ? null : status.checkedAt, heartbeatState,
       inboundStatus: status.inboundStatus, audioStatus: status.audioStatus,
       openaiRealtime: options.apiKey && options.webhookSecret ? 'ready' : status.openaiRealtime,
       backendOnline: true, databaseOnline

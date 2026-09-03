@@ -1,0 +1,19 @@
+[Unit]
+Description=Pizzer-IA Asterisk status heartbeat
+Wants=network-online.target
+After=network-online.target asterisk.service
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/pizzer-ia/heartbeat.env
+ExecStart=/usr/local/bin/pizzer-ia-heartbeat
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

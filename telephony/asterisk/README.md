@@ -15,6 +15,15 @@ La destinazione OpenAI UE è `sip:OPENAI_PROJECT_ID@sip-eu.api.openai.com;transp
 
 ## Heartbeat
 
-Impostare fuori dal repository `PIZZERIA_HEARTBEAT_URL` e `PIZZERIA_HEARTBEAT_TOKEN`, poi eseguire periodicamente `status-heartbeat.sh` (per esempio con un timer systemd). Il token deve corrispondere a `HEARTBEAT_SECRET` del backend. Lo script invia solo stato processo, registrazione, versione e timestamp; non invia credenziali SIP.
+Installare `status-heartbeat.sh` come `/usr/local/bin/pizzer-ia-heartbeat` e `pizzer-ia-heartbeat.service` in `/etc/systemd/system/`. Conservare URL, token dedicato e intervallo in `/etc/pizzer-ia/heartbeat.env` con permessi `0600`; il token deve corrispondere a `HEARTBEAT_SECRET` del backend. Lo script invia ogni 25 secondi solo stato processo, registrazione, versione e timestamp; non invia credenziali SIP.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now pizzer-ia-heartbeat
+sudo systemctl status pizzer-ia-heartbeat
+sudo journalctl -u pizzer-ia-heartbeat
+```
+
+L'unità parte con WSL/systemd, non dipende da una shell aperta e viene riavviata automaticamente dopo un errore. La dashboard mostra `STALE` dopo 90 secondi senza heartbeat e `N/D` se non ne ha mai ricevuto uno.
 
 Con WSL2 verificare inoltre che firewall/NAT consentano segnalazione e intervallo RTP configurato. Dopo ogni modifica usare `asterisk -rx "pjsip show registrations"` e la CLI Asterisk per leggere il codec effettivamente negoziato.
