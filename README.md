@@ -1,18 +1,18 @@
 # Pizzer-IA
 
-Pizzer-IA è un centralinista telefonico AI per pizzerie. Il numero telefonico viene inoltrato via SIP direttamente a OpenAI Realtime; il backend controlla il menu, esegue i tool dell'assistente, calcola i prezzi, salva gli ordini in PostgreSQL e serve la dashboard amministrativa.
+Pizzer-IA è un centralinista telefonico AI per pizzerie. sipcall consegna la chiamata ad Asterisk in WSL2, che la inoltra via SIP a OpenAI Realtime; il backend controlla menu e tool, calcola i prezzi, salva gli ordini in PostgreSQL e serve la dashboard.
 
 ## Architettura
 
 ```text
-sipcall DID → OpenAI Realtime SIP (audio) → webhook + sideband WebSocket
-                                              ↓
-                              Pizzer-IA / Fastify / PostgreSQL
-                                              ↓
-                                      dashboard admin
+sipcall Classic → Asterisk/WSL2 → OpenAI Realtime SIP
+                                      ↕ webhook + sideband WebSocket
+                               Fastify / PostgreSQL
+                                      ↓
+                               dashboard admin
 ```
 
-Non esiste un bridge audio applicativo: OpenAI termina direttamente SIP e media. Il canale WebSocket server-side gestisce esclusivamente eventi, tool e logica privata. La fonte di verità per prodotti, modificatori e prezzi è PostgreSQL; il modello non può impostare il totale.
+Asterisk è il gateway/B2BUA telefonico; il servizio Node non trasporta audio. Il sideband WebSocket gestisce eventi, tool e logica privata. PostgreSQL resta la fonte di verità per prodotti, modificatori e prezzi; il modello non può impostare il totale.
 
 ## Sviluppo locale
 
@@ -48,6 +48,7 @@ npm run check
 | `OPENAI_WEBHOOK_SECRET` | per webhook | Signing secret del webhook OpenAI |
 | `OPENAI_REALTIME_MODEL` | no | Default `gpt-realtime-2.1-mini` |
 | `OPENAI_VOICE` | no | Default `marin` |
+| `HEARTBEAT_SECRET` | per monitoraggio | Token dedicato Asterisk → backend |
 | `RESTAURANT_DID` | no | DID documentale/configurativo |
 | `HUMAN_TRANSFER_URI` | no | Destinazione SIP/tel per trasferimento umano |
 
@@ -67,7 +68,7 @@ L'applicazione applica in ordine i file `migrations/*.sql`, registrandoli in `_m
 
 ## Flusso OpenAI Realtime SIP
 
-1. Il trunk sipcall inoltra il DID a `sip:OPENAI_PROJECT_ID@sip-eu.api.openai.com;transport=tls`.
+1. sipcall inoltra il DID ad Asterisk; Asterisk inoltra a `sip:OPENAI_PROJECT_ID@sip-eu.api.openai.com;transport=tls`.
 2. OpenAI invia `realtime.call.incoming` a `POST /webhooks/openai`.
 3. Il backend verifica la firma sul raw body e registra l'evento in modo idempotente.
 4. Il backend associa il DID alla pizzeria, salva la chiamata e accetta `POST /v1/realtime/calls/{call_id}/accept`.
@@ -80,6 +81,9 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 
 - `GET /health` — stato servizio/database, pubblico
 - `POST /webhooks/openai` — webhook firmato OpenAI, pubblico
+- `POST /api/telephony/heartbeat` — heartbeat Asterisk con token dedicato
+- `GET /api/telephony/status` — stato telefonia, autenticato
+- `GET /api/usage/monthly` — utilizzo/costi mensili, autenticato
 - `GET /api/orders` — elenco ordini, autenticato
 - `PATCH /api/orders/:id/status` — avanzamento ordine, autenticato
 - `GET /api/menu` — menu e modificatori, autenticato
@@ -93,12 +97,13 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 - `src/postgres-store.ts` — persistenza PostgreSQL
 - `migrations/` — schema e menu demo
 - `public/` — dashboard responsive
+- `telephony/asterisk/` — template e heartbeat, mai applicati automaticamente
 - `tests/` — test HTTP, firma webhook, idempotenza e motore ordini
 
 ## Troubleshooting
 
 - `/health` 503: verificare `DATABASE_URL`, rete e stato addon.
 - Webhook 401: verificare che `OPENAI_WEBHOOK_SECRET` appartenga al webhook dello stesso progetto.
-- Chiamata non arriva: verificare Project ID nella SIP URI, TLS/5061 e configurazione di inoltro sipcall.
+- Chiamata non arriva: seguire in ordine Hello World, Echo e poi OpenAI; verificare registrazione sipcall, Project ID, TLS/5061, codec e RTP.
 - Chiamata arriva ma non parla: controllare API key, disponibilità del modello e log dell'accept endpoint.
 - Tool fallisce: verificare che menu/modificatori siano attivi e che gli ID provengano dai risultati del backend.

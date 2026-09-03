@@ -1,0 +1,18 @@
+; Copiare un solo contesto per volta nel dialplan live.
+[pizzeria-hello-world]
+exten => 41912102049,1,Answer()
+ same => n,Wait(1)
+ same => n,Playback(hello-world)
+ same => n,Hangup()
+
+[pizzeria-echo-test]
+exten => 41912102049,1,Answer()
+ same => n,Echo()
+ same => n,Hangup()
+
+[pizzeria-openai]
+exten => 41912102049,1,NoOp(Pizzer-IA to OpenAI Realtime)
+ same => n,Dial(PJSIP/OPENAI_PROJECT_ID@openai-realtime,60)
+ same => n,Answer()
+ same => n,Playback(custom/pizzer-ia-unavailable)
+ same => n,Hangup()

@@ -57,3 +57,36 @@ export interface IncomingCall {
   to?: string;
   restaurantId: string;
 }
+
+export type CheckState = 'waiting' | 'ok' | 'error';
+export type RealtimeState = 'waiting' | 'ready' | 'connected' | 'error';
+export type SipRegistration = 'registered' | 'unregistered' | 'unknown';
+
+export interface TelephonyHeartbeat {
+  asteriskOnline: boolean;
+  sipRegistration: SipRegistration;
+  version?: string;
+  checkedAt: string;
+}
+
+export interface TelephonyStatus extends TelephonyHeartbeat {
+  inboundStatus: CheckState;
+  audioStatus: CheckState;
+  openaiRealtime: RealtimeState;
+}
+
+export interface CallUsage {
+  audioInputTokens: number;
+  audioOutputTokens: number;
+  textInputTokens: number;
+  textOutputTokens: number;
+  openaiCostUsdMicros: number;
+}
+
+export interface MonthlyUsage extends CallUsage {
+  calls: number;
+  durationSeconds: number;
+  orders: number;
+  orderValueCents: number;
+  usageSource: 'REAL' | 'N/D';
+}

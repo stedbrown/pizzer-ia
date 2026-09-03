@@ -30,7 +30,27 @@ async function loadMenu(){
   document.querySelector('#menuList').innerHTML=menu.map(i=>`<div class="menu-row" data-item="${esc(i.id)}"><input class="item-name" type="text" value="${esc(i.name)}" aria-label="Nome prodotto"><label>CHF <input class="item-price" type="number" min="0" step="0.5" value="${(i.priceCents/100).toFixed(2)}" aria-label="Prezzo"></label><label class="switch"><input class="item-active" type="checkbox" ${i.active?'checked':''}> Attivo</label><button class="save">Salva</button></div>`).join('');
   document.querySelectorAll('.menu-row .save').forEach(button=>button.addEventListener('click',async e=>{const row=e.target.closest('.menu-row');await request(`/api/menu/${encodeURIComponent(row.dataset.item)}`,{method:'PATCH',body:JSON.stringify({name:row.querySelector('.item-name').value,priceCents:Math.round(Number(row.querySelector('.item-price').value)*100),active:row.querySelector('.item-active').checked})});toast('Prodotto salvato')}));
 }
-document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-tab],.panel').forEach(x=>x.classList.remove('active'));button.classList.add('active');document.querySelector(`#${button.dataset.tab}`).classList.add('active');if(button.dataset.tab==='menu')loadMenu()}));
-document.querySelector('#refresh').addEventListener('click',()=>{loadOrders();toast('Ordini aggiornati')});
+const stateLabel=(ok,yes,no='Non disponibile')=>ok===true?`<span class="state good">${yes}</span>`:ok===false?`<span class="state bad">${no}</span>`:`<span class="state neutral">N/D</span>`;
+async function loadTelephony(){
+  const [status,usage]=await Promise.all([request('/api/telephony/status'),request('/api/usage/monthly')]);
+  document.querySelector('#overallStatus').innerHTML=`<i></i> ${status.asteriskOnline&&status.sipRegistration==='registered'?'Centralino collegato':'Stato da verificare'}`;
+  document.querySelector('#telephonyChecked').textContent=`Ultimo controllo: ${status.heartbeatStale?'N/D':new Intl.DateTimeFormat('it-CH',{dateStyle:'short',timeStyle:'short'}).format(new Date(status.checkedAt))}`;
+  document.querySelector('#telephonyCards').innerHTML=[
+    ['Numero',`${esc(status.number)} · ${esc(status.provider)} ${esc(status.plan)}`],
+    ['Asterisk',stateLabel(status.asteriskOnline,'Online','Offline')],
+    ['Registrazione SIP',stateLabel(status.sipRegistration==='registered','Registrata',status.sipRegistration==='unregistered'?'Non registrata':'N/D')],
+    ['OpenAI Realtime',stateLabel(status.openaiRealtime==='ready','Configurato','In attesa')],
+    ['Backend',stateLabel(status.backendOnline,'Online','Offline')],
+    ['PostgreSQL',stateLabel(status.databaseOnline,'Connesso','Non connesso')]
+  ].map(([name,value])=>`<article><span>${name}</span><strong>${value}</strong></article>`).join('');
+  document.querySelector('#monthlyCalls').textContent=usage.calls;
+  document.querySelector('#monthlyDuration').textContent=`${Math.floor(usage.durationSeconds/60)} min ${usage.durationSeconds%60} s`;
+  document.querySelector('#openaiCost').textContent=usage.usageSource==='N/D'?'N/D':new Intl.NumberFormat('it-CH',{style:'currency',currency:'USD',minimumFractionDigits:4}).format(usage.openaiCostUsdMicros/1_000_000);
+  document.querySelector('#usageSource').textContent=usage.usageSource;
+  document.querySelector('#sipcallCost').textContent=money(usage.sipcallMonthlyChfCents);
+}
+document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-tab],.panel').forEach(x=>x.classList.remove('active'));button.classList.add('active');document.querySelector(`#${button.dataset.tab}`).classList.add('active');if(button.dataset.tab==='menu')loadMenu();if(button.dataset.tab==='telephony')loadTelephony().catch(e=>document.querySelector('#telephonyCards').innerHTML=`<div class="empty">${esc(e.message)}</div>`)}));
+document.querySelector('#refresh').addEventListener('click',()=>{loadOrders();if(document.querySelector('#telephony').classList.contains('active'))loadTelephony();toast('Dati aggiornati')});
 loadOrders().catch(e=>document.querySelector('#ordersList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);
+loadTelephony().catch(()=>{});
 setInterval(()=>{if(document.querySelector('#orders').classList.contains('active'))loadOrders()},15000);

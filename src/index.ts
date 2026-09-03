@@ -12,7 +12,8 @@ const app = buildApp({
   webhookSecret: process.env.OPENAI_WEBHOOK_SECRET,
   apiKey: process.env.OPENAI_API_KEY,
   realtimeModel: process.env.OPENAI_REALTIME_MODEL,
-  voice: process.env.OPENAI_VOICE
+  voice: process.env.OPENAI_VOICE,
+  heartbeatSecret: process.env.HEARTBEAT_SECRET
 });
 
 const shutdown = async () => { await app.close(); await pool.end(); process.exit(0); };

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DraftOrder, IncomingCall, MenuItem, OrderStatus, OrderView } from './types.js';
+import type { CallUsage, DraftOrder, IncomingCall, MenuItem, MonthlyUsage, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
 
 export interface Store {
   health(): Promise<boolean>;
@@ -7,6 +7,9 @@ export interface Store {
   getMenu(restaurantId: string, query?: string, includeInactive?: boolean): Promise<MenuItem[]>;
   updateMenuItem(restaurantId: string, itemId: string, patch: { name?: string; priceCents?: number; active?: boolean }): Promise<MenuItem | undefined>;
   saveCall(call: IncomingCall): Promise<void>;
+  markCallConnected(callId: string): Promise<void>;
+  addCallUsage(callId: string, usage: CallUsage): Promise<void>;
+  finishCall(callId: string): Promise<void>;
   getDraft(callId: string): Promise<DraftOrder | undefined>;
   saveDraft(draft: DraftOrder): Promise<void>;
   createOrder(draft: DraftOrder, menu: MenuItem[], totalCents: number): Promise<OrderView>;
@@ -14,6 +17,9 @@ export interface Store {
   setOrderStatus(restaurantId: string, orderId: string, status: OrderStatus): Promise<boolean>;
   claimWebhook(id: string, type: string, payload: unknown): Promise<boolean>;
   releaseWebhook(id: string): Promise<void>;
+  getTelephonyStatus(restaurantId: string): Promise<TelephonyStatus>;
+  updateTelephonyStatus(restaurantId: string, heartbeat: TelephonyHeartbeat): Promise<void>;
+  getMonthlyUsage(restaurantId: string): Promise<MonthlyUsage>;
 }
 
 export const DEMO_RESTAURANT_ID = '00000000-0000-4000-8000-000000000001';
@@ -41,6 +47,8 @@ export class MemoryStore implements Store {
   orders: OrderView[] = [];
   webhooks = new Set<string>();
   calls = new Map<string, IncomingCall>();
+  telephony: TelephonyStatus = { asteriskOnline: false, sipRegistration: 'unknown', checkedAt: new Date(0).toISOString(), inboundStatus: 'waiting', audioStatus: 'waiting', openaiRealtime: 'waiting' };
+  usage: CallUsage = { audioInputTokens: 0, audioOutputTokens: 0, textInputTokens: 0, textOutputTokens: 0, openaiCostUsdMicros: 0 };
 
   async health() { return true; }
   async restaurantForDid(did?: string) { return !did || did.includes(DEMO_DID) ? { id: DEMO_RESTAURANT_ID, name: 'Pizzer-IA Demo' } : undefined; }
@@ -55,6 +63,9 @@ export class MemoryStore implements Store {
     return item;
   }
   async saveCall(call: IncomingCall) { this.calls.set(call.callId, call); }
+  async markCallConnected() { this.telephony.openaiRealtime = 'connected'; }
+  async addCallUsage(_callId: string, usage: CallUsage) { for (const key of Object.keys(usage) as Array<keyof CallUsage>) this.usage[key] += usage[key]; }
+  async finishCall() { if (this.telephony.openaiRealtime === 'connected') this.telephony.openaiRealtime = 'ready'; }
   async getDraft(callId: string) { return this.drafts.get(callId); }
   async saveDraft(draft: DraftOrder) { this.drafts.set(draft.callId, structuredClone(draft)); }
   async createOrder(draft: DraftOrder, menu: MenuItem[], totalCents: number) {
@@ -91,4 +102,10 @@ export class MemoryStore implements Store {
     return true;
   }
   async releaseWebhook(id: string) { this.webhooks.delete(id); }
+  async getTelephonyStatus() { return structuredClone(this.telephony); }
+  async updateTelephonyStatus(_restaurantId: string, heartbeat: TelephonyHeartbeat) { Object.assign(this.telephony, heartbeat); }
+  async getMonthlyUsage(): Promise<MonthlyUsage> {
+    return { calls: this.calls.size, durationSeconds: 0, orders: this.orders.length, orderValueCents: this.orders.reduce((sum, order) => sum + order.totalCents, 0), ...this.usage,
+      usageSource: this.calls.size && !Object.values(this.usage).some(Boolean) ? 'N/D' : 'REAL' };
+  }
 }

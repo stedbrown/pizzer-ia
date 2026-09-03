@@ -16,6 +16,7 @@ export interface AppOptions {
   apiKey?: string;
   realtimeModel?: string;
   voice?: string;
+  heartbeatSecret?: string;
   publicDir?: string;
 }
 
@@ -32,6 +33,13 @@ export function buildApp(options: AppOptions) {
     const left = createHash('sha256').update(supplied).digest();
     const right = createHash('sha256').update(expected).digest();
     if (!timingSafeEqual(left, right)) return reply.header('WWW-Authenticate', 'Basic realm="Pizzer-IA"').code(401).send({ error: 'Autenticazione richiesta' });
+  };
+  const heartbeatAuth = async (request: FastifyRequest, reply: FastifyReply) => {
+    const supplied = String(request.headers['x-heartbeat-token'] ?? '');
+    const expected = options.heartbeatSecret ?? '';
+    const left = createHash('sha256').update(supplied).digest();
+    const right = createHash('sha256').update(expected).digest();
+    if (!expected || !timingSafeEqual(left, right)) return reply.code(401).send({ error: 'Token heartbeat non valido' });
   };
 
   app.get('/health', async (_request, reply) => {
@@ -56,6 +64,39 @@ export function buildApp(options: AppOptions) {
     const item = await options.store.updateMenuItem(DEMO_RESTAURANT_ID, params.id, body);
     return item ?? reply.code(404).send({ error: 'Prodotto non trovato' });
   });
+  app.post('/api/telephony/heartbeat', { preHandler: heartbeatAuth }, async (request) => {
+    const body = z.object({
+      asteriskOnline: z.boolean(),
+      sipRegistration: z.enum(['registered', 'unregistered', 'unknown']),
+      version: z.string().trim().max(80).optional(),
+      checkedAt: z.string().datetime()
+    }).parse(jsonBody(request));
+    await options.store.updateTelephonyStatus(DEMO_RESTAURANT_ID, body);
+    return { ok: true };
+  });
+  app.get('/api/telephony/status', { preHandler: auth }, async () => {
+    const status = await options.store.getTelephonyStatus(DEMO_RESTAURANT_ID);
+    const stale = Date.now() - Date.parse(status.checkedAt) > 180_000;
+    let databaseOnline = true;
+    try { await options.store.health(); } catch { databaseOnline = false; }
+    return {
+      provider: 'sipcall', plan: 'Classic', number: '091 210 20 49',
+      asteriskOnline: stale ? null : status.asteriskOnline,
+      sipRegistration: stale ? 'unknown' : status.sipRegistration,
+      version: status.version, checkedAt: status.checkedAt, heartbeatStale: stale,
+      inboundStatus: status.inboundStatus, audioStatus: status.audioStatus,
+      openaiRealtime: options.apiKey && options.webhookSecret ? 'ready' : status.openaiRealtime,
+      backendOnline: true, databaseOnline
+    };
+  });
+  app.get('/api/usage/monthly', { preHandler: auth }, async () => ({
+    ...(await options.store.getMonthlyUsage(DEMO_RESTAURANT_ID)),
+    sipcallMonthlyChfCents: 380,
+    sipcallPriceSource: 'CURRENT',
+    infrastructureCost: null,
+    totalCost: null,
+    openaiCostCurrency: 'USD'
+  }));
 
   app.post('/webhooks/openai', async (request, reply) => {
     const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.from(JSON.stringify(request.body ?? {}));

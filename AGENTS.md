@@ -2,13 +2,13 @@
 
 ## Obiettivo
 
-Mantenere un MVP affidabile che riceva chiamate sipcall direttamente su OpenAI Realtime SIP, raccolga ordini tramite tool backend, li persista in PostgreSQL e li mostri nella dashboard.
+Mantenere un MVP affidabile che riceva chiamate sipcall tramite Asterisk in WSL2, le inoltri a OpenAI Realtime SIP, raccolga ordini tramite tool backend, li persista in PostgreSQL e li mostri nella dashboard.
 
 ## Vincoli architetturali
 
 - Un solo servizio Node.js/TypeScript/Fastify espone API, webhook, sideband e dashboard.
 - Un solo PostgreSQL contiene ristoranti, menu, chiamate, ordini ed eventi webhook.
-- OpenAI gestisce direttamente audio e SIP. Non introdurre Asterisk, FreeSWITCH, Twilio o 3CX salvo un vincolo tecnico dimostrato.
+- Asterisk 22 in WSL2 è il solo gateway/B2BUA telefonico tra sipcall e OpenAI. Non introdurre FreeSWITCH, Twilio o 3CX salvo un vincolo tecnico dimostrato.
 - Preparare le nuove tabelle con `restaurant_id` quando i dati sono tenant-specifici.
 
 ## Regola non negoziabile sui prezzi
@@ -17,6 +17,8 @@ L'LLM non calcola e non sceglie mai prezzi o totali. Gli ID di prodotti e modifi
 
 ## Flusso Realtime SIP
 
+- Collaudare sempre nell'ordine Hello World, Echo, OpenAI Realtime, ordine completo; non modificare il dialplan live prima che il test corrente sia riuscito.
+- I template Asterisk restano senza credenziali e vengono integrati manualmente con backup.
 - Il webhook `realtime.call.incoming` deve essere verificato sul raw body e deduplicato tramite `webhook_events`.
 - Associare il SIP `To` al DID del ristorante e conservare il `call_id`.
 - Accettare la chiamata tramite `/v1/realtime/calls/{call_id}/accept` con modello, voce, prompt e function tools.
@@ -50,7 +52,7 @@ Le migrazioni sono SQL versionate in `migrations/` e vengono applicate in transa
 - Non committare, stampare, fotografare o riportare in chat chiavi, signing secret, password o connection string.
 - Non registrare audio per default e non raccogliere pagamenti o dati carta.
 - Evitare numeri telefonici completi nei log.
-- Dashboard e API amministrative devono restare protette; health e webhook sono le sole route pubbliche previste.
+- Dashboard e API amministrative devono restare protette; health e webhook sono pubblici, mentre l'heartbeat usa un secret dedicato.
 - Usare confronti timing-safe per credenziali/firme e limiti stretti per body e input.
 
 ## Prevenzione regressioni

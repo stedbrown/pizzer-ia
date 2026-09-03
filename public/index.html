@@ -13,7 +13,7 @@
       <span class="brand-mark">P</span>
       <span><strong>PIZZER-IA</strong><small>Console pizzeria</small></span>
     </a>
-    <div class="live"><i></i> Centralino attivo</div>
+    <div class="live" id="overallStatus"><i></i> Stato in verifica</div>
   </header>
 
   <main>
@@ -25,6 +25,7 @@
     <nav class="tabs" aria-label="Sezioni">
       <button data-tab="orders" class="active">Ordini <span id="orderCount">0</span></button>
       <button data-tab="menu">Menu</button>
+      <button data-tab="telephony">Telefonia</button>
     </nav>
 
     <section id="orders" class="panel active" aria-live="polite">
@@ -39,6 +40,18 @@
     <section id="menu" class="panel" aria-live="polite">
       <div class="section-heading"><div><p class="eyebrow">LISTINO</p><h2>Menu della pizzeria</h2></div><p>Prezzi sempre determinati dal backend.</p></div>
       <div id="menuList" class="menu-list"><div class="skeleton">Caricamento menu…</div></div>
+    </section>
+
+    <section id="telephony" class="panel" aria-live="polite">
+      <div class="section-heading"><div><p class="eyebrow">INFRASTRUTTURA</p><h2>Telefonia e costi</h2></div><p id="telephonyChecked">Ultimo controllo: N/D</p></div>
+      <div id="telephonyCards" class="telephony-grid"><div class="skeleton">Verifica collegamenti…</div></div>
+      <div class="costs">
+        <article><span>Chiamate del mese</span><strong id="monthlyCalls">—</strong></article>
+        <article><span>Durata totale</span><strong id="monthlyDuration">—</strong></article>
+        <article><span>OpenAI Realtime</span><strong id="openaiCost">—</strong><small id="usageSource">N/D</small></article>
+        <article><span>sipcall Classic</span><strong id="sipcallCost">—</strong><small>canone mensile attuale</small></article>
+        <article><span>Totale complessivo</span><strong>N/D</strong><small>cambio USD/CHF e infrastruttura non inclusi</small></article>
+      </div>
     </section>
   </main>
   <div id="toast" role="status"></div>

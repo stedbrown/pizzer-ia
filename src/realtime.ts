@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import type { Store } from './store.js';
 import { OrderEngine } from './order-engine.js';
+import type { CallUsage } from './types.js';
 
 const tool = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []) => ({
   type: 'function', name, description,
@@ -51,10 +52,18 @@ export async function acceptRealtimeCall(args: { callId: string; restaurantName:
 export function connectSideband(args: { callId: string; restaurantId: string; callerPhone?: string; apiKey: string; store: Store }) {
   const ws = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(args.callId)}`, { headers: { Authorization: `Bearer ${args.apiKey}` } });
   const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone);
-  ws.on('open', () => ws.send(JSON.stringify({ type: 'response.create' })));
+  ws.on('open', () => {
+    void args.store.markCallConnected(args.callId).catch(() => undefined);
+    ws.send(JSON.stringify({ type: 'response.create' }));
+  });
   ws.on('message', async (data) => {
     let event: any;
     try { event = JSON.parse(data.toString()); } catch { return; }
+    if (event.type === 'response.done') {
+      const usage = usageFromEvent(event);
+      if (usage) await args.store.addCallUsage(args.callId, usage);
+      return;
+    }
     if (event.type !== 'response.function_call_arguments.done') return;
     let output: unknown;
     try {
@@ -70,9 +79,25 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
     ws.send(JSON.stringify({ type: 'response.create' }));
   });
+  ws.on('close', () => void args.store.finishCall(args.callId).catch(() => undefined));
   ws.on('error', () => undefined);
   return ws;
 }
+
+function usageFromEvent(event: any): CallUsage | undefined {
+  const usage = event.response?.usage;
+  if (!usage) return undefined;
+  const input = usage.input_token_details ?? {};
+  const output = usage.output_token_details ?? {};
+  const audioInputTokens = finiteInt(input.audio_tokens);
+  const audioOutputTokens = finiteInt(output.audio_tokens);
+  const textInputTokens = finiteInt(input.text_tokens ?? Math.max(0, finiteInt(usage.input_tokens) - audioInputTokens));
+  const textOutputTokens = finiteInt(output.text_tokens ?? Math.max(0, finiteInt(usage.output_tokens) - audioOutputTokens));
+  return { audioInputTokens, audioOutputTokens, textInputTokens, textOutputTokens,
+    openaiCostUsdMicros: Math.round(audioInputTokens * 10 + audioOutputTokens * 20 + textInputTokens * 0.6 + textOutputTokens * 2.4) };
+}
+
+function finiteInt(value: unknown) { return Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : 0; }
 
 async function referCall(callId: string, targetUri: string, apiKey: string) {
   const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(callId)}/refer`, {
