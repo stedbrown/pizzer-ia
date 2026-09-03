@@ -58,7 +58,7 @@ function matchesLogFilter(event){
   return ({telephony:'TELEPHONY',openai:'OPENAI',backend:'BACKEND',tool:'TOOL',database:'DATABASE'})[logFilter]===event.category;
 }
 function renderLogs(){
-  const list=document.querySelector('#liveLogList'),visible=liveLogEvents.filter(matchesLogFilter);
+  const list=document.querySelector('#liveLogList'),visible=liveLogEvents.sort((a,b)=>Date.parse(a.timestamp)-Date.parse(b.timestamp)).filter(matchesLogFilter);
   list.innerHTML=visible.length?visible.map(event=>`<div class="log-row"><time>${new Intl.DateTimeFormat('it-CH',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(event.timestamp))}</time><b class="source">${esc(event.source)}</b><span class="level ${event.level.toLowerCase()}">${esc(event.level)}</span><span class="log-message">${esc(maskPhones(event.message))}</span><code>${esc(maskPhones(event.callId||'—'))}</code></div>`).join(''):'<div class="empty">Nessun evento per questo filtro.</div>';
   list.scrollTop=list.scrollHeight;
 }

@@ -22,7 +22,7 @@ post_event() {
   checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   message="$(printf '%s' "$message" | tr -cd '[:alnum:] ._:%/@+(),=-' | head -c 500)"
   payload="$(printf '[{\"source\":\"%s\",\"level\":\"%s\",\"message\":\"%s\",\"timestamp\":\"%s\"}]' "$source" "$level" "$message" "$checked_at")"
-  curl --fail --silent --show-error --output /dev/null \
+  curl --fail --silent --show-error --connect-timeout 5 --max-time 15 --output /dev/null \
     -H "content-type: application/json" -H "x-heartbeat-token: ${PIZZERIA_HEARTBEAT_TOKEN}" \
     --data "$payload" "$PIZZERIA_HEARTBEAT_URL/api/telephony/events"
 }
@@ -41,7 +41,7 @@ send_heartbeat() {
   read_status
   checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   payload="$(printf '{\"asteriskOnline\":%s,\"sipRegistration\":\"%s\",\"version\":\"%s\",\"checkedAt\":\"%s\"}' "$online" "$sip_status" "$version" "$checked_at")"
-  response="$(curl --fail --silent --show-error \
+  response="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
     -H "content-type: application/json" -H "x-heartbeat-token: ${PIZZERIA_HEARTBEAT_TOKEN}" \
     --data "$payload" "$PIZZERIA_HEARTBEAT_URL/api/telephony/heartbeat")"
   if printf '%s' "$response" | grep -q '"testMode":true'; then
@@ -52,7 +52,11 @@ send_heartbeat() {
   fi
   printf '%s heartbeat sent: asterisk=%s sip=%s version=%s test=%s\n' "$checked_at" "$online" "$sip_status" "$version" "$([[ $test_until -gt 0 ]] && echo on || echo off)"
   if [[ "$online" != "$last_online" ]]; then post_event ASTERISK "$([[ "$online" == true ]] && echo INFO || echo ERROR)" "$([[ "$online" == true ]] && echo 'Service online' || echo 'Service unavailable')"; last_online="$online"; fi
-  if [[ "$sip_status" != "$last_sip" ]]; then post_event SIPCALL "$([[ "$sip_status" == registered ]] && echo INFO || echo WARN)" "Registration $sip_status"; last_sip="$sip_status"; fi
+  if [[ "$sip_status" != "$last_sip" ]]; then
+    if [[ "$sip_status" == registered ]]; then post_event SIPCALL INFO 'Registered'
+    else post_event SIPCALL WARN "Registration $sip_status"; fi
+    last_sip="$sip_status"
+  fi
 }
 
 enable_test_logging() {
