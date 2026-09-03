@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import { MemoryStore } from '../src/store.js';
+import { DEMO_RESTAURANT_ID, MemoryStore } from '../src/store.js';
 
 describe('HTTP application', () => {
   let app: ReturnType<typeof buildApp>;
@@ -36,5 +36,38 @@ describe('HTTP application', () => {
     const response = await app.inject({ method: 'GET', url: '/api/usage/monthly', headers: auth });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ calls: 0, sipcallMonthlyChfCents: 380, infrastructureCost: null, totalCost: null });
+  });
+  it('ingests redacted structured telephony events', async () => {
+    const ingest = await app.inject({ method: 'POST', url: '/api/telephony/events', headers: { 'x-heartbeat-token': 'heartbeat-test' }, payload: [{ source: 'SIP', level: 'INFO', message: 'INVITE from +41 91 210 20 49 Authorization: Bearer unsafe-value' }] });
+    expect(ingest.statusCode).toBe(200);
+    const response = await app.inject({ method: 'GET', url: '/api/live-logs', headers: auth });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()[0]).toMatchObject({ source: 'SIP', category: 'TELEPHONY', message: 'INVITE from ***2049 Authorization: [REDACTED]' });
+  });
+  it('limits test mode to 15 minutes and exposes it to heartbeat', async () => {
+    const enabled = await app.inject({ method: 'POST', url: '/api/test-mode', headers: auth, payload: { enabled: true } });
+    expect(enabled.statusCode).toBe(200);
+    expect(Date.parse(enabled.json().expiresAt) - Date.now()).toBeLessThanOrEqual(15 * 60_000);
+    const heartbeat = await app.inject({ method: 'POST', url: '/api/telephony/heartbeat', headers: { 'x-heartbeat-token': 'heartbeat-test' }, payload: { asteriskOnline: true, sipRegistration: 'registered', checkedAt: new Date().toISOString() } });
+    expect(heartbeat.json()).toMatchObject({ testMode: true, testModeExpiresAt: enabled.json().expiresAt });
+    const disabled = await app.inject({ method: 'POST', url: '/api/test-mode', headers: auth, payload: { enabled: false } });
+    expect(disabled.json()).toEqual({ enabled: false, expiresAt: null });
+
+    await store.setTestModeUntil(DEMO_RESTAURANT_ID, new Date(Date.now() - 1).toISOString());
+    const expired = await app.inject({ method: 'GET', url: '/api/test-mode', headers: auth });
+    expect(expired.json()).toEqual({ enabled: false, expiresAt: null });
+  });
+  it('streams newly ingested events over SSE', async () => {
+    const address = await app.listen({ port: 0, host: '127.0.0.1' });
+    const controller = new AbortController();
+    const stream = await fetch(`${address}/api/live-logs/stream`, { headers: auth, signal: controller.signal });
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+    await app.inject({ method: 'POST', url: '/api/telephony/events', headers: { 'x-heartbeat-token': 'heartbeat-test' }, payload: [{ source: 'ASTERISK', level: 'INFO', message: 'Service online' }] });
+    let received = '';
+    while (!received.includes('Service online')) received += new TextDecoder().decode((await reader.read()).value);
+    controller.abort();
+    expect(received).toContain('event: log');
+    expect(received).toContain('"source":"ASTERISK"');
   });
 });

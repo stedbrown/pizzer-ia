@@ -51,8 +51,36 @@ async function loadTelephony(){
   document.querySelector('#usageSource').textContent=usage.usageSource;
   document.querySelector('#sipcallCost').textContent=money(usage.sipcallMonthlyChfCents);
 }
-document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-tab],.panel').forEach(x=>x.classList.remove('active'));button.classList.add('active');document.querySelector(`#${button.dataset.tab}`).classList.add('active');if(button.dataset.tab==='menu')loadMenu();if(button.dataset.tab==='telephony')loadTelephony().catch(e=>document.querySelector('#telephonyCards').innerHTML=`<div class="empty">${esc(e.message)}</div>`)}));
-document.querySelector('#refresh').addEventListener('click',()=>{loadOrders();if(document.querySelector('#telephony').classList.contains('active'))loadTelephony();toast('Dati aggiornati')});
+let liveLogEvents=[],logFilter='all',logStream,testModeExpiresAt;
+const maskPhones=value=>String(value??'').replace(/\+?\d(?:[\s().-]*\d){6,}/g,phone=>{if((phone.match(/\./g)||[]).length>=3)return phone;const digits=phone.replace(/\D/g,'');return digits.length>4?`***${digits.slice(-4)}`:'***'});
+function matchesLogFilter(event){
+  if(logFilter==='all')return true;if(logFilter==='errors')return event.level==='ERROR';
+  return ({telephony:'TELEPHONY',openai:'OPENAI',backend:'BACKEND',tool:'TOOL',database:'DATABASE'})[logFilter]===event.category;
+}
+function renderLogs(){
+  const list=document.querySelector('#liveLogList'),visible=liveLogEvents.filter(matchesLogFilter);
+  list.innerHTML=visible.length?visible.map(event=>`<div class="log-row"><time>${new Intl.DateTimeFormat('it-CH',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(event.timestamp))}</time><b class="source">${esc(event.source)}</b><span class="level ${event.level.toLowerCase()}">${esc(event.level)}</span><span class="log-message">${esc(maskPhones(event.message))}</span><code>${esc(maskPhones(event.callId||'—'))}</code></div>`).join(''):'<div class="empty">Nessun evento per questo filtro.</div>';
+  list.scrollTop=list.scrollHeight;
+}
+function addLiveLog(event){if(liveLogEvents.some(item=>item.id===event.id))return;liveLogEvents.push(event);liveLogEvents=liveLogEvents.slice(-500);renderLogs()}
+async function loadLogs(){liveLogEvents=await request('/api/live-logs?limit=300');renderLogs()}
+function startLogStream(){
+  if(logStream)return;logStream=new EventSource('/api/live-logs/stream');
+  logStream.addEventListener('open',()=>{document.querySelector('#streamStatus').className='state good';document.querySelector('#streamStatus').textContent='Live'});
+  logStream.addEventListener('log',event=>{try{addLiveLog(JSON.parse(event.data))}catch{}});
+  logStream.addEventListener('error',()=>{document.querySelector('#streamStatus').className='state stale';document.querySelector('#streamStatus').textContent='Riconnessione…'});
+}
+function renderTestMode(){
+  const remaining=testModeExpiresAt?Math.max(0,Date.parse(testModeExpiresAt)-Date.now()):0,button=document.querySelector('#testMode'),countdown=document.querySelector('#testModeCountdown');
+  if(!remaining){testModeExpiresAt=undefined;button.textContent='Abilita modalità test';button.classList.remove('danger');countdown.textContent='Disattivata';return}
+  button.textContent='Disabilita modalità test';button.classList.add('danger');countdown.textContent=`Termina tra ${Math.ceil(remaining/60000)} min`;
+}
+async function loadTestMode(){const state=await request('/api/test-mode');testModeExpiresAt=state.expiresAt||undefined;renderTestMode()}
+document.querySelector('#testMode').addEventListener('click',async()=>{const enabled=!testModeExpiresAt;const state=await request('/api/test-mode',{method:'POST',body:JSON.stringify({enabled})});testModeExpiresAt=state.expiresAt||undefined;renderTestMode();toast(enabled?'Modalità test attiva per massimo 15 minuti':'Modalità test disattivata')});
+document.querySelectorAll('[data-log-filter]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-log-filter]').forEach(item=>item.classList.remove('active'));button.classList.add('active');logFilter=button.dataset.logFilter;renderLogs()}));
+setInterval(renderTestMode,1000);
+document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-tab],.panel').forEach(x=>x.classList.remove('active'));button.classList.add('active');document.querySelector(`#${button.dataset.tab}`).classList.add('active');if(button.dataset.tab==='menu')loadMenu();if(button.dataset.tab==='telephony')loadTelephony().catch(e=>document.querySelector('#telephonyCards').innerHTML=`<div class="empty">${esc(e.message)}</div>`);if(button.dataset.tab==='liveLogs'){Promise.all([loadLogs(),loadTestMode()]).catch(e=>document.querySelector('#liveLogList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);startLogStream()}}));
+document.querySelector('#refresh').addEventListener('click',()=>{loadOrders();if(document.querySelector('#telephony').classList.contains('active'))loadTelephony();if(document.querySelector('#liveLogs').classList.contains('active'))Promise.all([loadLogs(),loadTestMode()]);toast('Dati aggiornati')});
 loadOrders().catch(e=>document.querySelector('#ordersList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);
 loadTelephony().catch(()=>{});
 setInterval(()=>{if(document.querySelector('#orders').classList.contains('active'))loadOrders()},15000);

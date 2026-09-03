@@ -54,6 +54,8 @@ Le migrazioni sono SQL versionate in `migrations/` e vengono applicate in transa
 - Evitare numeri telefonici completi nei log.
 - Dashboard e API amministrative devono restare protette; health e webhook sono pubblici, mentre l'heartbeat usa un secret dedicato.
 - Usare confronti timing-safe per credenziali/firme e limiti stretti per body e input.
+- Gli eventi Live Logs devono essere strutturati e passare dalla redaction centralizzata prima della persistenza e dell'output. Non salvare mai secret, Authorization, connection string o password; mascherare i telefoni.
+- Conservare al massimo 1.000 eventi per ristorante e 24 ore. La modalità test dura al massimo 15 minuti, non abilita mai RTP packet debug e deve spegnere il logger PJSIP su scadenza/uscita.
 
 ## Prevenzione regressioni
 

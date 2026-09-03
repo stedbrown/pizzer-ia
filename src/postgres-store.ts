@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import type { CallUsage, DraftOrder, IncomingCall, MenuItem, Modifier, MonthlyUsage, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
+import type { CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, Modifier, MonthlyUsage, NewLiveLogEvent, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
 import type { Store } from './store.js';
 
 export class PostgresStore implements Store {
@@ -140,10 +140,38 @@ export class PostgresStore implements Store {
       audioInputTokens:Number(row.audio_input_tokens),audioOutputTokens:Number(row.audio_output_tokens),textInputTokens:Number(row.text_input_tokens),textOutputTokens:Number(row.text_output_tokens),
       openaiCostUsdMicros:Number(row.openai_cost_usd_micros),usageSource:calls>0&&tokenTotal===0?'N/D':'REAL' } as MonthlyUsage;
   }
+  async addLogEvent(restaurantId: string, event: NewLiveLogEvent) {
+    const result = await this.pool.query(`INSERT INTO live_log_events (restaurant_id,occurred_at,source,level,category,message,call_id)
+      VALUES ($1,COALESCE($2::timestamptz,now()),$3,$4,$5,$6,$7)
+      RETURNING id::text,restaurant_id,occurred_at,source,level,category,message,call_id`,
+      [restaurantId, event.timestamp ?? null, event.source, event.level, event.category, event.message, event.callId ?? null]);
+    await this.pool.query(`DELETE FROM live_log_events WHERE restaurant_id=$1 AND
+      (occurred_at < now() - interval '24 hours' OR id NOT IN (SELECT id FROM live_log_events WHERE restaurant_id=$1 ORDER BY id DESC LIMIT 1000))`, [restaurantId]);
+    return mapLogEvent(result.rows[0]);
+  }
+  async listLogEvents(restaurantId: string, limit = 200) {
+    const result = await this.pool.query(`SELECT id::text,restaurant_id,occurred_at,source,level,category,message,call_id
+      FROM live_log_events WHERE restaurant_id=$1 ORDER BY id DESC LIMIT $2`, [restaurantId, Math.min(500, Math.max(1, limit))]);
+    return result.rows.reverse().map(mapLogEvent);
+  }
+  async getTestModeUntil(restaurantId: string) {
+    const result = await this.pool.query('SELECT test_mode_until FROM telephony_status WHERE restaurant_id=$1', [restaurantId]);
+    const value = result.rows[0]?.test_mode_until as Date | undefined;
+    return value && value.getTime() > Date.now() ? value.toISOString() : undefined;
+  }
+  async setTestModeUntil(restaurantId: string, until?: string) {
+    await this.pool.query(`INSERT INTO telephony_status (restaurant_id,test_mode_until) VALUES ($1,$2)
+      ON CONFLICT (restaurant_id) DO UPDATE SET test_mode_until=EXCLUDED.test_mode_until,updated_at=now()`, [restaurantId, until ?? null]);
+  }
 }
 
 function mapMenuItem(row: any): MenuItem {
   return { id: row.id, restaurantId: row.restaurant_id, name: row.name, description: row.description ?? undefined, priceCents: row.price_cents, active: row.active, modifiers: row.modifiers as Modifier[] };
+}
+
+function mapLogEvent(row: any): LiveLogEvent {
+  return { id: row.id, restaurantId: row.restaurant_id, timestamp: row.occurred_at.toISOString(), source: row.source,
+    level: row.level, category: row.category, message: row.message, callId: row.call_id ?? undefined };
 }
 
 function orderQuery(where: string) {

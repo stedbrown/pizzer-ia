@@ -90,3 +90,22 @@ export interface MonthlyUsage extends CallUsage {
   orderValueCents: number;
   usageSource: 'REAL' | 'N/D';
 }
+
+export type LogSource = 'ASTERISK' | 'SIPCALL' | 'SIP' | 'CALL' | 'RTP' | 'HEARTBEAT' | 'OPENAI' | 'WEBHOOK' | 'SIDEBAND' | 'TOOL' | 'ORDER' | 'DB' | 'BACKEND';
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+export type LogCategory = 'TELEPHONY' | 'OPENAI' | 'BACKEND' | 'TOOL' | 'DATABASE';
+
+export interface NewLiveLogEvent {
+  source: LogSource;
+  level: LogLevel;
+  category: LogCategory;
+  message: string;
+  callId?: string;
+  timestamp?: string;
+}
+
+export interface LiveLogEvent extends NewLiveLogEvent {
+  id: string;
+  restaurantId: string;
+  timestamp: string;
+}

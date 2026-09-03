@@ -1,7 +1,9 @@
 import WebSocket from 'ws';
 import type { Store } from './store.js';
 import { OrderEngine } from './order-engine.js';
-import type { CallUsage } from './types.js';
+import type { CallUsage, NewLiveLogEvent } from './types.js';
+
+type LogInput = Omit<NewLiveLogEvent, 'category'> & { category?: NewLiveLogEvent['category'] };
 
 const tool = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []) => ({
   type: 'function', name, description,
@@ -49,11 +51,14 @@ export async function acceptRealtimeCall(args: { callId: string; restaurantName:
   if (!response.ok) throw new Error(`OpenAI accept failed (${response.status})`);
 }
 
-export function connectSideband(args: { callId: string; restaurantId: string; callerPhone?: string; apiKey: string; store: Store }) {
+export function connectSideband(args: { callId: string; restaurantId: string; callerPhone?: string; apiKey: string; store: Store; log?: (event: LogInput) => Promise<unknown> }) {
   const ws = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(args.callId)}`, { headers: { Authorization: `Bearer ${args.apiKey}` } });
-  const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone);
+  const writeLog = (event: LogInput) => { void args.log?.({ ...event, callId: event.callId ?? args.callId }).catch(() => undefined); };
+  const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone, args.log);
   ws.on('open', () => {
     void args.store.markCallConnected(args.callId).catch(() => undefined);
+    writeLog({ source: 'SIDEBAND', level: 'INFO', message: 'WebSocket connected' });
+    writeLog({ source: 'CALL', level: 'INFO', message: 'Realtime media session established' });
     ws.send(JSON.stringify({ type: 'response.create' }));
   });
   ws.on('message', async (data) => {
@@ -62,26 +67,51 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     if (event.type === 'response.done') {
       const usage = usageFromEvent(event);
       if (usage) await args.store.addCallUsage(args.callId, usage);
+      if (await args.store.getTestModeUntil(args.restaurantId)) writeLog({ source: 'OPENAI', level: 'DEBUG', message: usage ? `Response completed (${usage.audioInputTokens + usage.audioOutputTokens} audio tokens)` : 'Response completed' });
+      return;
+    }
+    if (event.type === 'error') {
+      writeLog({ source: 'OPENAI', level: 'ERROR', message: event.error?.message ?? 'Realtime error' });
+      return;
+    }
+    if (event.type === 'input_audio_buffer.speech_started' && await args.store.getTestModeUntil(args.restaurantId)) {
+      writeLog({ source: 'CALL', level: 'DEBUG', message: 'Caller speech started' });
       return;
     }
     if (event.type !== 'response.function_call_arguments.done') return;
     let output: unknown;
+    let parsed: any;
     try {
-      const parsed = event.arguments ? JSON.parse(event.arguments) : {};
+      parsed = event.arguments ? JSON.parse(event.arguments) : {};
       output = await engine.execute(event.name, parsed);
+      writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, output) });
       if (event.name === 'transfer_to_human' && process.env.HUMAN_TRANSFER_URI) {
         await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
       }
     } catch (error) {
       output = { error: error instanceof Error ? error.message : 'Errore del backend' };
+      writeLog({ source: 'TOOL', level: 'ERROR', message: `${event.name ?? 'unknown'} failed: ${error instanceof Error ? error.message : 'backend error'}` });
     }
     if (ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
     ws.send(JSON.stringify({ type: 'response.create' }));
   });
-  ws.on('close', () => void args.store.finishCall(args.callId).catch(() => undefined));
-  ws.on('error', () => undefined);
+  ws.on('close', () => {
+    void args.store.finishCall(args.callId).catch(() => undefined);
+    writeLog({ source: 'CALL', level: 'INFO', message: 'Call ended' });
+    writeLog({ source: 'SIDEBAND', level: 'INFO', message: 'WebSocket closed' });
+  });
+  ws.on('error', () => writeLog({ source: 'SIDEBAND', level: 'ERROR', message: 'WebSocket error' }));
   return ws;
+}
+
+function toolMessage(name: string, input: any, output: any) {
+  if (name === 'add_item') {
+    const item = Array.isArray(output?.items) ? output.items.find((value: any) => value.itemId === input.item_id) : undefined;
+    return `add_item ${item?.name ?? input.item_id ?? 'item'} x${input.quantity ?? 1}`;
+  }
+  if (name === 'confirm_order') return `confirm_order ${output?.orderNumber ?? 'completed'}`;
+  return `${name} completed`;
 }
 
 function usageFromEvent(event: any): CallUsage | undefined {

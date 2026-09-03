@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { DraftOrder, MenuItem } from './types.js';
+import type { DraftOrder, MenuItem, NewLiveLogEvent } from './types.js';
 import type { Store } from './store.js';
 
 export class OrderError extends Error {}
@@ -25,7 +25,12 @@ export function calculateDraft(draft: DraftOrder, menu: MenuItem[]) {
 }
 
 export class OrderEngine {
-  constructor(private store: Store, private restaurantId: string, private callId: string, private callerPhone?: string) {}
+  constructor(private store: Store, private restaurantId: string, private callId: string, private callerPhone?: string,
+    private log?: (event: Omit<NewLiveLogEvent, 'category'> & { category?: NewLiveLogEvent['category'] }) => Promise<unknown>) {}
+
+  private writeLog(event: Omit<NewLiveLogEvent, 'category' | 'callId'> & { category?: NewLiveLogEvent['category'] }) {
+    void this.log?.({ ...event, callId: this.callId }).catch(() => undefined);
+  }
 
   private async draft() {
     return (await this.store.getDraft(this.callId)) ?? { restaurantId: this.restaurantId, callId: this.callId, callerPhone: this.callerPhone, lines: [] };
@@ -36,6 +41,7 @@ export class OrderEngine {
     fn(draft);
     draft.summaryPresentedAt = undefined;
     await this.store.saveDraft(draft);
+    this.writeLog({ source: 'ORDER', level: 'DEBUG', message: 'Draft updated' });
     return this.summary(draft);
   }
   private async summary(input?: DraftOrder) {
@@ -86,6 +92,7 @@ export class OrderEngine {
         const result = await this.summary(draft);
         draft.summaryPresentedAt = new Date().toISOString();
         await this.store.saveDraft(draft);
+        this.writeLog({ source: 'ORDER', level: 'INFO', message: 'Order summary presented' });
         return { ...result, instruction: 'Leggi questo riepilogo al cliente e chiedi: Conferma l’ordine?' };
       }
       case 'confirm_order': {
@@ -99,8 +106,10 @@ export class OrderEngine {
         const menu = await this.store.getMenu(this.restaurantId);
         const priced = calculateDraft(draft, menu);
         const order = await this.store.createOrder(draft, menu, priced.totalCents);
+        this.writeLog({ source: 'DB', level: 'INFO', message: `Order created: ${order.orderNumber}` });
         draft.confirmedOrderId = order.id;
         await this.store.saveDraft(draft);
+        this.writeLog({ source: 'ORDER', level: 'INFO', message: `Order confirmed: ${order.orderNumber}` });
         return { orderNumber: order.orderNumber, totalCents: order.totalCents, status: order.status };
       }
       case 'transfer_to_human': return { available: Boolean(process.env.HUMAN_TRANSFER_URI), message: process.env.HUMAN_TRANSFER_URI ? 'Trasferimento in corso' : 'Trasferimento umano non configurato' };

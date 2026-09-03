@@ -26,4 +26,6 @@ sudo journalctl -u pizzer-ia-heartbeat
 
 L'unità parte con WSL/systemd, non dipende da una shell aperta e viene riavviata automaticamente dopo un errore. La dashboard mostra `STALE` dopo 90 secondi senza heartbeat e `N/D` se non ne ha mai ricevuto uno.
 
+La modalità test viene richiesta dalla dashboard e scade lato server dopo massimo 15 minuti. Solo durante quella finestra lo script abilita `pjsip set logger on`, legge dal journal esclusivamente gli eventi SIP importanti e lo disabilita alla scadenza o all'arresto del servizio. I riepiloghi RTP derivano da `pjsip show channelstats`; `rtp set debug` non viene mai abilitato. Nessuna porta inbound viene aggiunta.
+
 Con WSL2 verificare inoltre che firewall/NAT consentano segnalazione e intervallo RTP configurato. Dopo ogni modifica usare `asterisk -rx "pjsip show registrations"` e la CLI Asterisk per leggere il codec effettivamente negoziato.

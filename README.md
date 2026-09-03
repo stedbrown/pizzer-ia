@@ -82,8 +82,12 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 - `GET /health` — stato servizio/database, pubblico
 - `POST /webhooks/openai` — webhook firmato OpenAI, pubblico
 - `POST /api/telephony/heartbeat` — heartbeat Asterisk con token dedicato
+- `POST /api/telephony/events` — batch di eventi telefonici strutturati con lo stesso token
 - `GET /api/telephony/status` — stato telefonia, autenticato
 - `GET /api/usage/monthly` — utilizzo/costi mensili, autenticato
+- `GET /api/live-logs` — eventi recenti redatti, autenticato
+- `GET /api/live-logs/stream` — stream SSE dei nuovi eventi, autenticato
+- `GET|POST /api/test-mode` — stato/attivazione diagnostica per massimo 15 minuti
 - `GET /api/orders` — elenco ordini, autenticato
 - `PATCH /api/orders/:id/status` — avanzamento ordine, autenticato
 - `GET /api/menu` — menu e modificatori, autenticato
@@ -97,6 +101,7 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 - `src/postgres-store.ts` — persistenza PostgreSQL
 - `migrations/` — schema e menu demo
 - `public/` — dashboard responsive
+- `src/live-logs.ts` — classificazione e redaction centralizzata
 - `telephony/asterisk/` — template e heartbeat, mai applicati automaticamente
 - `tests/` — test HTTP, firma webhook, idempotenza e motore ordini
 
@@ -107,3 +112,9 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 - Chiamata non arriva: seguire in ordine Hello World, Echo e poi OpenAI; verificare registrazione sipcall, Project ID, TLS/5061, codec e RTP.
 - Chiamata arriva ma non parla: controllare API key, disponibilità del modello e log dell'accept endpoint.
 - Tool fallisce: verificare che menu/modificatori siano attivi e che gli ID provengano dai risultati del backend.
+
+## Live Logs
+
+La dashboard integra uno stream SSE di eventi strutturati provenienti da Asterisk, SIP, heartbeat, webhook, sideband, tool, OrderEngine, PostgreSQL e backend. PostgreSQL conserva al massimo gli ultimi 1.000 eventi per ristorante e non oltre 24 ore. Secret, header di autorizzazione, connection string e numeri telefonici vengono redatti prima della scrittura e nuovamente prima della risposta UI.
+
+La modalità test scade automaticamente dopo 15 minuti. Il collector outbound abilita temporaneamente solo il logger PJSIP, estrae REGISTER/INVITE/100/180/200/ACK/BYE dal journal e lo spegne alla scadenza o al riavvio. RTP viene rappresentato con sommari periodici, senza debug per-pacchetto e senza nuove porte inbound.

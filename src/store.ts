@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CallUsage, DraftOrder, IncomingCall, MenuItem, MonthlyUsage, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
+import type { CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, MonthlyUsage, NewLiveLogEvent, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
 
 export interface Store {
   health(): Promise<boolean>;
@@ -20,6 +20,10 @@ export interface Store {
   getTelephonyStatus(restaurantId: string): Promise<TelephonyStatus>;
   updateTelephonyStatus(restaurantId: string, heartbeat: TelephonyHeartbeat): Promise<void>;
   getMonthlyUsage(restaurantId: string): Promise<MonthlyUsage>;
+  addLogEvent(restaurantId: string, event: NewLiveLogEvent): Promise<LiveLogEvent>;
+  listLogEvents(restaurantId: string, limit?: number): Promise<LiveLogEvent[]>;
+  getTestModeUntil(restaurantId: string): Promise<string | undefined>;
+  setTestModeUntil(restaurantId: string, until?: string): Promise<void>;
 }
 
 export const DEMO_RESTAURANT_ID = '00000000-0000-4000-8000-000000000001';
@@ -49,6 +53,9 @@ export class MemoryStore implements Store {
   calls = new Map<string, IncomingCall>();
   telephony: TelephonyStatus = { asteriskOnline: false, sipRegistration: 'unknown', checkedAt: new Date(0).toISOString(), inboundStatus: 'waiting', audioStatus: 'waiting', openaiRealtime: 'waiting' };
   usage: CallUsage = { audioInputTokens: 0, audioOutputTokens: 0, textInputTokens: 0, textOutputTokens: 0, openaiCostUsdMicros: 0 };
+  liveLogs: LiveLogEvent[] = [];
+  testModeUntil?: string;
+  private nextLogId = 1;
 
   async health() { return true; }
   async restaurantForDid(did?: string) { return !did || did.includes(DEMO_DID) ? { id: DEMO_RESTAURANT_ID, name: 'Pizzer-IA Demo' } : undefined; }
@@ -108,4 +115,19 @@ export class MemoryStore implements Store {
     return { calls: this.calls.size, durationSeconds: 0, orders: this.orders.length, orderValueCents: this.orders.reduce((sum, order) => sum + order.totalCents, 0), ...this.usage,
       usageSource: this.calls.size && !Object.values(this.usage).some(Boolean) ? 'N/D' : 'REAL' };
   }
+  async addLogEvent(restaurantId: string, event: NewLiveLogEvent) {
+    const saved: LiveLogEvent = { ...event, id: String(this.nextLogId++), restaurantId, timestamp: event.timestamp ?? new Date().toISOString() };
+    this.liveLogs.push(saved);
+    this.liveLogs = this.liveLogs.slice(-1000);
+    return structuredClone(saved);
+  }
+  async listLogEvents(restaurantId: string, limit = 200) { return structuredClone(this.liveLogs.filter((event) => event.restaurantId === restaurantId).slice(-limit)); }
+  async getTestModeUntil() {
+    if (!this.testModeUntil || Date.parse(this.testModeUntil) <= Date.now()) {
+      this.testModeUntil = undefined;
+      return undefined;
+    }
+    return this.testModeUntil;
+  }
+  async setTestModeUntil(_restaurantId: string, until?: string) { this.testModeUntil = until; }
 }
