@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4efe6">
+  <title>Pizzer-IA — Console ordini</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#orders" aria-label="Pizzer-IA home">
+      <span class="brand-mark">P</span>
+      <span><strong>PIZZER-IA</strong><small>Console pizzeria</small></span>
+    </a>
+    <div class="live"><i></i> Centralino attivo</div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">OGGI · <span id="today"></span></p><h1>Buon servizio.</h1><p>Gli ordini telefonici arrivano qui, già controllati e calcolati.</p></div>
+      <button id="refresh" class="secondary">↻ Aggiorna</button>
+    </section>
+
+    <nav class="tabs" aria-label="Sezioni">
+      <button data-tab="orders" class="active">Ordini <span id="orderCount">0</span></button>
+      <button data-tab="menu">Menu</button>
+    </nav>
+
+    <section id="orders" class="panel active" aria-live="polite">
+      <div class="stats">
+        <article><span>Da preparare</span><strong id="todoCount">—</strong></article>
+        <article><span>Pronti</span><strong id="readyCount">—</strong></article>
+        <article><span>Incasso ordini</span><strong id="revenue">—</strong></article>
+      </div>
+      <div id="ordersList" class="orders-list"><div class="skeleton">Caricamento ordini…</div></div>
+    </section>
+
+    <section id="menu" class="panel" aria-live="polite">
+      <div class="section-heading"><div><p class="eyebrow">LISTINO</p><h2>Menu della pizzeria</h2></div><p>Prezzi sempre determinati dal backend.</p></div>
+      <div id="menuList" class="menu-list"><div class="skeleton">Caricamento menu…</div></div>
+    </section>
+  </main>
+  <div id="toast" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

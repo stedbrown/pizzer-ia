@@ -1,0 +1,82 @@
+import WebSocket from 'ws';
+import type { Store } from './store.js';
+import { OrderEngine } from './order-engine.js';
+
+const tool = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []) => ({
+  type: 'function', name, description,
+  parameters: { type: 'object', properties, required, additionalProperties: false }
+});
+
+export const realtimeTools = [
+  tool('get_menu', 'Restituisce il menu attivo e i prezzi ufficiali dal backend.'),
+  tool('search_menu', 'Cerca prodotti reali nel menu.', { query: { type: 'string' } }, ['query']),
+  tool('start_order', 'Inizia o recupera la bozza ordine corrente.'),
+  tool('add_item', 'Aggiunge un prodotto usando solo ID restituiti dal menu.', { item_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['item_id', 'quantity', 'modifier_ids']),
+  tool('remove_item', 'Rimuove una riga dalla bozza.', { line_id: { type: 'string' } }, ['line_id']),
+  tool('update_item', 'Aggiorna quantità o modificatori di una riga.', { line_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['line_id']),
+  tool('set_customer_name', 'Imposta il nome del cliente.', { name: { type: 'string' } }, ['name']),
+  tool('set_fulfillment', 'Imposta ritiro o consegna.', { type: { type: 'string', enum: ['pickup', 'delivery'] } }, ['type']),
+  tool('set_delivery_address', 'Imposta indirizzo completo per la consegna.', { address: { type: 'string' } }, ['address']),
+  tool('calculate_total', 'Calcola il totale esclusivamente sul backend.'),
+  tool('get_order_summary', 'Ottiene il riepilogo ufficiale e abilita la successiva conferma.'),
+  tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
+  tool('transfer_to_human', 'Trasferisce a una persona quando richiesto o per allergie importanti.')
+];
+
+export function centralistInstructions(restaurantName: string, callerPhone?: string) {
+  return `Sei l'assistente virtuale AI di ${restaurantName}. Parla in italiano naturale, cortese, veloce e non prolisso.
+Presentati subito: "Pizzeria, buongiorno! Sono l'assistente virtuale. Cosa desidera ordinare?"
+Ti occupi esclusivamente di ordini. Non inventare mai piatti, ingredienti, disponibilità, prezzi, supplementi o sconti: usa sempre i tool e considera i risultati del backend unica fonte di verità.
+Usa get_menu o search_menu, poi start_order e i tool di modifica. Chiedi ritiro o consegna. Per ritiro raccogli il nome; per consegna raccogli nome e indirizzo. Il caller ID ${callerPhone ? 'è già disponibile al backend' : 'non è disponibile'}.
+Prima della conferma usa get_order_summary, leggi prodotti, quantità, modifiche, modalità, indirizzo se necessario e totale, poi chiedi esattamente "Conferma l'ordine?". Usa confirm_order soltanto dopo un sì inequivocabile pronunciato dopo il riepilogo.
+Se viene richiesta una persona usa transfer_to_human. Per allergie non dare garanzie sanitarie: spiega che serve conferma della pizzeria e prova a trasferire. Non raccogliere carte di credito.`;
+}
+
+export async function acceptRealtimeCall(args: { callId: string; restaurantName: string; callerPhone?: string; apiKey: string; model: string; voice: string }) {
+  const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(args.callId)}/accept`, {
+    method: 'POST', headers: { Authorization: `Bearer ${args.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'realtime', model: args.model, instructions: centralistInstructions(args.restaurantName, args.callerPhone),
+      output_modalities: ['audio'], max_output_tokens: 700, parallel_tool_calls: false,
+      audio: {
+        input: { turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true, silence_duration_ms: 550 } },
+        output: { voice: args.voice }
+      },
+      tools: realtimeTools, tool_choice: 'auto', tracing: 'auto'
+    })
+  });
+  if (!response.ok) throw new Error(`OpenAI accept failed (${response.status})`);
+}
+
+export function connectSideband(args: { callId: string; restaurantId: string; callerPhone?: string; apiKey: string; store: Store }) {
+  const ws = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(args.callId)}`, { headers: { Authorization: `Bearer ${args.apiKey}` } });
+  const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone);
+  ws.on('open', () => ws.send(JSON.stringify({ type: 'response.create' })));
+  ws.on('message', async (data) => {
+    let event: any;
+    try { event = JSON.parse(data.toString()); } catch { return; }
+    if (event.type !== 'response.function_call_arguments.done') return;
+    let output: unknown;
+    try {
+      const parsed = event.arguments ? JSON.parse(event.arguments) : {};
+      output = await engine.execute(event.name, parsed);
+      if (event.name === 'transfer_to_human' && process.env.HUMAN_TRANSFER_URI) {
+        await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
+      }
+    } catch (error) {
+      output = { error: error instanceof Error ? error.message : 'Errore del backend' };
+    }
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
+    ws.send(JSON.stringify({ type: 'response.create' }));
+  });
+  ws.on('error', () => undefined);
+  return ws;
+}
+
+async function referCall(callId: string, targetUri: string, apiKey: string) {
+  const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(callId)}/refer`, {
+    method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ target_uri: targetUri })
+  });
+  if (!response.ok) throw new Error(`OpenAI refer failed (${response.status})`);
+}
