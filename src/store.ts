@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Callback, CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, MonthlyUsage, NewLiveLogEvent, OpeningSlot, OrderStatus, OrderView, ServiceSettings, TelephonyHeartbeat, TelephonyStatus } from './types.js';
 import { matchesMenuQuery } from './menu-search.js';
+import { dateInTimeZone } from './service-hours.js';
 
 export interface MenuItemPatch {
   name?: string;
@@ -74,6 +75,7 @@ export function demoMenu(): MenuItem[] {
 
 export function demoServiceSettings(): ServiceSettings {
   return {
+    configured: true,
     timezone: 'Europe/Zurich', prepMinutes: 20, deliveryExtraMinutes: 15, busyExtraMinutes: 15,
     busyMode: false, acceptsDelivery: true,
     hours: [0, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, opens: '17:00', closes: '22:30' }))
@@ -81,7 +83,7 @@ export function demoServiceSettings(): ServiceSettings {
 }
 
 /** Un prodotto è ordinabile se è attivo e non è segnato finito per oggi. */
-export function orderable(item: MenuItem, today = new Date().toISOString().slice(0, 10)) {
+export function orderable(item: MenuItem, today = dateInTimeZone('Europe/Zurich')) {
   return item.active && (!item.soldOutUntil || item.soldOutUntil < today);
 }
 
@@ -113,10 +115,11 @@ export class MemoryStore implements Store {
     if (soldOutUntil !== undefined) item.soldOutUntil = soldOutUntil ?? undefined;
     return item;
   }
-  async getServiceSettings() { return structuredClone(this.settings); }
+  async getServiceSettings(restaurantId: string) { void restaurantId; return structuredClone(this.settings); }
   async updateServiceSettings(_restaurantId: string, patch: ServiceSettingsPatch) {
     const { hours, ...rest } = patch;
     Object.assign(this.settings, rest);
+    this.settings.configured = true;
     if (hours) this.settings.hours = structuredClone(hours);
     return structuredClone(this.settings);
   }
@@ -147,6 +150,8 @@ export class MemoryStore implements Store {
       const existing = this.orders.find((o) => o.id === draft.confirmedOrderId);
       if (existing) return existing;
     }
+    const sameCall = this.orders.find((order) => (order as OrderView & { callId?: string }).callId === draft.callId);
+    if (sameCall) return sameCall;
     const id = randomUUID();
     const order: OrderView = {
       id, orderNumber: `PZ-${String(this.orders.length + 1).padStart(4, '0')}`,
@@ -160,6 +165,7 @@ export class MemoryStore implements Store {
         return { name: item.name, quantity: line.quantity, unitPriceCents, modifiers, lineTotalCents: unitPriceCents * line.quantity };
       })
     };
+    Object.defineProperty(order, 'callId', { value: draft.callId, enumerable: false });
     this.orders.unshift(order);
     return order;
   }

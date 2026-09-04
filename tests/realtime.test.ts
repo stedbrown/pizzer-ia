@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildRealtimeSession, buildTurnDetection, CallCloser, centralistInstructions, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE,
-  orderStateMessage, realtimeTools, ResponseScheduler, supportsParallelToolCalls, toolOutputForModel
+  orderStateMessage, phoneFromSipHeader, realtimeTools, ResponseScheduler, supportsParallelToolCalls, toolOutputForModel
 } from '../src/realtime.js';
 
 const draftResult = {
@@ -36,7 +36,7 @@ describe('Realtime voice agent', () => {
     const prompt = centralistInstructions('Pizzeria Test', undefined, { briefing: 'Sono le 18:30. Adesso siete aperti e si chiude alle 22:30.' });
     expect(prompt).toContain('OGGI');
     expect(prompt).toContain('si chiude alle 22:30');
-    expect(prompt).toContain('I tempi di attesa e gli orari te li ho scritti sopra');
+    expect(prompt).toContain('puoi dirli solo se il briefing li dichiara confermati');
     expect(prompt).toContain('readyTime');
   });
 
@@ -95,7 +95,7 @@ describe('Realtime voice agent', () => {
     expect(DEFAULT_REALTIME_MODEL).toBe('gpt-realtime-2.1');
     expect(DEFAULT_VOICE).toBe('marin');
     expect(buildRealtimeSession({ restaurantName: 'Pizzeria Test', model: 'gpt-realtime-2.1-mini', voice: 'cedar' }))
-      .toMatchObject({ model: 'gpt-realtime-2.1-mini', parallel_tool_calls: true, audio: { output: { voice: 'cedar' } } });
+      .toMatchObject({ model: 'gpt-realtime-2.1-mini', parallel_tool_calls: false, audio: { output: { voice: 'cedar' } } });
     expect(supportsParallelToolCalls('gpt-realtime-1.5')).toBe(false);
     expect(buildRealtimeSession({ restaurantName: 'Pizzeria Test', model: 'gpt-realtime-1.5', voice: 'marin' }).parallel_tool_calls).toBe(false);
   });
@@ -164,11 +164,17 @@ describe('Tool output shaping', () => {
   });
 
   it('hides the add-ons while browsing and reveals them only on a targeted search', () => {
-    const item = { id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante', active: true, restaurantId: 'r', modifiers: [{ id: 'mod-1', name: 'senza mozzarella', priceCents: 0, active: true }] };
+    const item = { id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante', category: 'rosse', allergens: ['glutine'], active: true, restaurantId: 'r', modifiers: [{ id: 'mod-1', name: 'senza mozzarella', priceCents: 0, kind: 'remove', active: true }] };
     const browsed: any = toolOutputForModel('get_menu', [item]);
-    expect(browsed.items[0]).toEqual({ id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante' });
+    expect(browsed.items[0]).toEqual({ id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante', category: 'rosse', allergens: ['glutine'] });
     const searched: any = toolOutputForModel('search_menu', [item]);
-    expect(searched.items[0].modifiers).toEqual([{ id: 'mod-1', name: 'senza mozzarella' }]);
+    expect(searched.items[0].modifiers).toEqual([{ id: 'mod-1', name: 'senza mozzarella', priceCents: 0, kind: 'remove' }]);
+  });
+
+  it('normalizes a SIP caller id before SMS or callbacks', () => {
+    expect(phoneFromSipHeader('"Mario" <sip:+41791234567@sip.example>')).toBe('+41791234567');
+    expect(phoneFromSipHeader('079 123 45 67')).toBe('+41791234567');
+    expect(phoneFromSipHeader('anonymous')).toBeUndefined();
   });
 
   it('keeps confirmation and transfer results intact', () => {

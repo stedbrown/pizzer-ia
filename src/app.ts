@@ -10,10 +10,10 @@ import type { Store } from './store.js';
 import { DEMO_RESTAURANT_ID } from './store.js';
 import type { NewLiveLogEvent, OrderStatus } from './types.js';
 import { verifyOpenAIWebhook } from './webhook-signature.js';
-import { acceptRealtimeCall, buildTurnDetection, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE } from './realtime.js';
+import { acceptRealtimeCall, buildTurnDetection, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE, phoneFromSipHeader } from './realtime.js';
 import { publicLogEvent, safeLogEvent } from './live-logs.js';
 import { buildConversations } from './conversations.js';
-import { serviceBriefing, serviceStatus } from './service-hours.js';
+import { isValidClock, isValidTimeZone, serviceBriefing, serviceStatus } from './service-hours.js';
 import { smsConfigured } from './notify.js';
 
 export interface AppOptions {
@@ -33,6 +33,15 @@ export interface AppOptions {
 
 export function buildApp(options: AppOptions) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 1_000_000 });
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return reply.code(400).send({ error: 'Dati non validi' });
+    }
+    const known = error as { statusCode?: number; message?: string };
+    const status = Number(known.statusCode) || 500;
+    if (status >= 500) request.log.error({ err: known.message ?? 'unknown' }, 'request failed');
+    return reply.code(status).send({ error: status >= 500 ? 'Errore interno' : known.message ?? 'Richiesta non valida' });
+  });
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
   // La dashboard è un bundle Vite: solo gli asset con hash sono pubblici, l'index resta dietro autenticazione.
   const webDir = options.publicDir ?? join(process.cwd(), 'dist', 'web');
@@ -86,7 +95,9 @@ export function buildApp(options: AppOptions) {
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = z.object({ status: z.enum(['NEW','CONFIRMED','PREPARING','READY','COMPLETED','CANCELLED']) }).parse(jsonBody(request));
     const updated = await options.store.setOrderStatus(DEMO_RESTAURANT_ID, params.id, body.status as OrderStatus);
-    return updated ? { ok: true } : reply.code(404).send({ error: 'Ordine non trovato' });
+    if (!updated) return reply.code(404).send({ error: 'Ordine non trovato' });
+    await emitLog({ source: 'ORDER', level: 'INFO', message: `Stato ordine aggiornato: ${body.status}` });
+    return { ok: true };
   });
   app.get('/api/menu', { preHandler: auth }, async () => options.store.getMenu(DEMO_RESTAURANT_ID, undefined, true));
   app.patch('/api/menu/:id', { preHandler: auth }, async (request, reply) => {
@@ -100,7 +111,9 @@ export function buildApp(options: AppOptions) {
       soldOutUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
     }).parse(jsonBody(request));
     const item = await options.store.updateMenuItem(DEMO_RESTAURANT_ID, params.id, body);
-    return item ?? reply.code(404).send({ error: 'Prodotto non trovato' });
+    if (!item) return reply.code(404).send({ error: 'Prodotto non trovato' });
+    await emitLog({ source: 'DB', level: 'INFO', message: `Menu aggiornato: ${item.name}` });
+    return item;
   });
   app.get('/api/service', { preHandler: auth }, async () => {
     const settings = await options.store.getServiceSettings(DEMO_RESTAURANT_ID);
@@ -108,7 +121,7 @@ export function buildApp(options: AppOptions) {
   });
   app.patch('/api/service', { preHandler: auth }, async (request) => {
     const body = z.object({
-      timezone: z.string().trim().min(3).max(60).optional(),
+      timezone: z.string().trim().min(3).max(60).refine(isValidTimeZone).optional(),
       prepMinutes: z.number().int().min(1).max(180).optional(),
       deliveryExtraMinutes: z.number().int().min(0).max(120).optional(),
       busyExtraMinutes: z.number().int().min(0).max(120).optional(),
@@ -116,9 +129,9 @@ export function buildApp(options: AppOptions) {
       acceptsDelivery: z.boolean().optional(),
       hours: z.array(z.object({
         weekday: z.number().int().min(0).max(6),
-        opens: z.string().regex(/^\d{2}:\d{2}$/),
-        closes: z.string().regex(/^\d{2}:\d{2}$/)
-      })).max(28).optional()
+        opens: z.string().refine(isValidClock),
+        closes: z.string().refine(isValidClock)
+      }).refine((slot) => slot.opens !== slot.closes)).max(28).optional()
     }).parse(jsonBody(request));
     const settings = await options.store.updateServiceSettings(DEMO_RESTAURANT_ID, body);
     await emitLog({ source: 'BACKEND', level: 'INFO', message: 'Impostazioni di servizio aggiornate' });
@@ -127,7 +140,9 @@ export function buildApp(options: AppOptions) {
   app.get('/api/callbacks', { preHandler: auth }, async () => options.store.listCallbacks(DEMO_RESTAURANT_ID));
   app.post('/api/callbacks/:id/resolve', { preHandler: auth }, async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
-    return (await options.store.resolveCallback(DEMO_RESTAURANT_ID, params.id)) ? { ok: true } : reply.code(404).send({ error: 'Richiamo non trovato' });
+    if (!(await options.store.resolveCallback(DEMO_RESTAURANT_ID, params.id))) return reply.code(404).send({ error: 'Richiamo non trovato' });
+    await emitLog({ source: 'DB', level: 'INFO', message: 'Richiamo segnato come completato' });
+    return { ok: true };
   });
   app.post('/api/telephony/heartbeat', { preHandler: heartbeatAuth }, async (request) => {
     const body = z.object({
@@ -234,6 +249,7 @@ export function buildApp(options: AppOptions) {
       if (!options.apiKey) throw new Error('OpenAI API key non configurata');
       const headers = Array.isArray(event.data?.sip_headers) ? event.data.sip_headers : [];
       const from = sipHeader(headers, 'From');
+      const callerPhone = phoneFromSipHeader(from);
       const to = sipHeader(headers, 'To');
       const callId = z.string().min(1).parse(event.data?.call_id);
       currentCallId = callId;
@@ -249,9 +265,11 @@ export function buildApp(options: AppOptions) {
       const testMode = Boolean(await options.store.getTestModeUntil(restaurant.id));
       // Orari e tempi entrano nel prompt all'accettazione: nessun round trip in più durante la chiamata.
       const status = serviceStatus(await options.store.getServiceSettings(restaurant.id));
-      await emitLog({ source: 'BACKEND', level: 'INFO', message: status.open ? `Pizzeria aperta, ritiro ~${status.pickupMinutes} min` : 'Pizzeria chiusa: nessun ordine accettato', callId });
+      await emitLog({ source: 'BACKEND', level: status.configured ? 'INFO' : 'WARN', message: !status.configured
+        ? 'Impostazioni servizio non confermate: ordini sospesi'
+        : status.open ? `Pizzeria aperta, ritiro ~${status.pickupMinutes} min` : 'Pizzeria chiusa: nessun ordine accettato', callId });
       await acceptRealtimeCall({
-        callId, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey,
+        callId, restaurantName: restaurant.name, callerPhone, apiKey: options.apiKey,
         model: options.realtimeModel ?? DEFAULT_REALTIME_MODEL, voice: options.voice ?? DEFAULT_VOICE,
         greeting: options.greeting, largeOrderThreshold: options.largeOrderThreshold,
         briefing: serviceBriefing(status, restaurant.name),
@@ -259,7 +277,7 @@ export function buildApp(options: AppOptions) {
         turnDetection: options.turnDetection, vadEagerness: options.vadEagerness, testMode
       });
       await emitLog({ source: 'OPENAI', level: 'INFO', message: 'Realtime call accepted', callId });
-      connectSideband({ callId, restaurantId: restaurant.id, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey, store: options.store, log: emitLog });
+      connectSideband({ callId, restaurantId: restaurant.id, restaurantName: restaurant.name, callerPhone, apiKey: options.apiKey, store: options.store, log: emitLog });
       return { ok: true };
     } catch (error) {
       await options.store.releaseWebhook(eventId);

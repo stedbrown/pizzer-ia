@@ -30,6 +30,8 @@ export function calculateDraft(draft: DraftOrder, menu: MenuItem[]) {
 }
 
 export class OrderEngine {
+  private operationTail: Promise<void> = Promise.resolve();
+
   constructor(private store: Store, private restaurantId: string, private callId: string, private callerPhone?: string,
     private log?: (event: Omit<NewLiveLogEvent, 'category'> & { category?: NewLiveLogEvent['category'] }) => Promise<unknown>) {}
 
@@ -55,7 +57,16 @@ export class OrderEngine {
     return { ...calculateDraft(draft, menu), customerName: draft.customerName, phone: draft.callerPhone ? maskPhone(draft.callerPhone) : undefined, fulfillment: draft.fulfillment, deliveryAddress: draft.deliveryAddress, confirmedOrderId: draft.confirmedOrderId };
   }
 
+  /** I tool della stessa chiamata sono sempre seriali: la bozza JSON non può perdere aggiornamenti concorrenti. */
   async execute(name: string, raw: unknown): Promise<unknown> {
+    const previous = this.operationTail;
+    let release!: () => void;
+    this.operationTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try { return await this.executeSerial(name, raw); } finally { release(); }
+  }
+
+  private async executeSerial(name: string, raw: unknown): Promise<unknown> {
     switch (name) {
       case 'get_menu': return this.store.getMenu(this.restaurantId);
       case 'search_menu': {
@@ -112,7 +123,10 @@ export class OrderEngine {
         const priced = calculateDraft(draft, menu);
         // L'ora di pronto la decide la pizzeria dalle sue impostazioni, non il modello.
         const settings = await this.store.getServiceSettings(this.restaurantId);
+        if (!settings.configured) throw new OrderError('Impostazioni di servizio non ancora confermate: registra un richiamo');
         const status = serviceStatus(settings);
+        if (!status.open) throw new OrderError(status.opensAt ? `La pizzeria è chiusa; riapre ${status.opensAt}` : 'La pizzeria è chiusa');
+        if (draft.fulfillment === 'delivery' && !status.acceptsDelivery) throw new OrderError('Le consegne non sono attive: proponi il ritiro');
         const ready = readyAt(status, draft.fulfillment);
         const order = await this.store.createOrder(draft, menu, priced.totalCents, ready);
         this.writeLog({ source: 'DB', level: 'INFO', message: `Order created: ${order.orderNumber}` });

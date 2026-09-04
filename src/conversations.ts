@@ -95,6 +95,6 @@ function headlineOf(ordered: LiveLogEvent[]) {
 function outcomeOf(ordered: LiveLogEvent[]): Conversation['outcome'] {
   const tools = ordered.filter((event) => event.source === 'TOOL').map((event) => event.message);
   if (tools.some((message) => message.startsWith('confirm_order'))) return 'confermato';
-  if (tools.some((message) => message.startsWith('transfer_to_human'))) return 'trasferita';
+  if (tools.some((message) => message === 'transfer_to_human transferred')) return 'trasferita';
   return ordered.some((event) => event.source === 'CALL' && event.message === 'Call ended') ? 'chiusa' : 'in corso';
 }

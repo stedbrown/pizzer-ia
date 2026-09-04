@@ -19,7 +19,8 @@ export class PostgresStore implements Store {
     const values: unknown[] = [restaurantId];
     let where = 'mi.restaurant_id = $1';
     // "Finito per oggi" vale quanto un prodotto disattivato, ma si azzera da solo domani.
-    if (!includeInactive) where += ' AND mi.active AND (mi.sold_out_until IS NULL OR mi.sold_out_until < CURRENT_DATE)';
+    if (!includeInactive) where += ` AND mi.active AND (mi.sold_out_until IS NULL OR mi.sold_out_until <
+      (now() AT TIME ZONE COALESCE((SELECT r.timezone FROM restaurants r WHERE r.id=mi.restaurant_id), 'Europe/Zurich'))::date)`;
     const terms = query ? menuSearchTerms(query) : [];
     if (terms.length) {
       values.push(terms.map((term) => `%${term}%`));
@@ -38,11 +39,12 @@ export class PostgresStore implements Store {
     return result.rows.map(mapMenuItem);
   }
   async getServiceSettings(restaurantId: string) {
-    const settings = await this.pool.query(`SELECT timezone, prep_minutes, delivery_extra_minutes, busy_extra_minutes, busy_mode, accepts_delivery
+    const settings = await this.pool.query(`SELECT service_configured, timezone, prep_minutes, delivery_extra_minutes, busy_extra_minutes, busy_mode, accepts_delivery
       FROM restaurants WHERE id=$1`, [restaurantId]);
     const hours = await this.pool.query('SELECT weekday, opens::text, closes::text FROM restaurant_hours WHERE restaurant_id=$1 ORDER BY weekday, opens', [restaurantId]);
     const row = settings.rows[0] ?? {};
     return {
+      configured: row.service_configured ?? false,
       timezone: row.timezone ?? 'Europe/Zurich',
       prepMinutes: row.prep_minutes ?? 20,
       deliveryExtraMinutes: row.delivery_extra_minutes ?? 15,
@@ -58,7 +60,8 @@ export class PostgresStore implements Store {
       await client.query('BEGIN');
       await client.query(`UPDATE restaurants SET
         timezone=COALESCE($2,timezone), prep_minutes=COALESCE($3,prep_minutes), delivery_extra_minutes=COALESCE($4,delivery_extra_minutes),
-        busy_extra_minutes=COALESCE($5,busy_extra_minutes), busy_mode=COALESCE($6,busy_mode), accepts_delivery=COALESCE($7,accepts_delivery)
+        busy_extra_minutes=COALESCE($5,busy_extra_minutes), busy_mode=COALESCE($6,busy_mode), accepts_delivery=COALESCE($7,accepts_delivery),
+        service_configured=true
         WHERE id=$1`,
         [restaurantId, patch.timezone ?? null, patch.prepMinutes ?? null, patch.deliveryExtraMinutes ?? null,
           patch.busyExtraMinutes ?? null, patch.busyMode ?? null, patch.acceptsDelivery ?? null]);
@@ -147,10 +150,16 @@ export class PostgresStore implements Store {
       }
       const id = randomUUID();
       const orderNumber = `PZ-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${id.slice(0, 4).toUpperCase()}`;
-      await client.query(`INSERT INTO orders
+      const inserted = await client.query(`INSERT INTO orders
         (id,order_number,restaurant_id,call_id,customer_name,customer_phone,fulfillment,delivery_address,total_cents,status,ready_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'CONFIRMED',$10)`,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'CONFIRMED',$10)
+        ON CONFLICT (call_id) WHERE call_id IS NOT NULL DO NOTHING RETURNING id`,
         [id, orderNumber, draft.restaurantId, draft.callId, draft.customerName, draft.callerPhone ?? null, draft.fulfillment, draft.deliveryAddress ?? null, totalCents, readyAt ?? null]);
+      if (!inserted.rowCount) {
+        const winner = await client.query('SELECT id FROM orders WHERE call_id=$1 LIMIT 1', [draft.callId]);
+        await client.query('COMMIT');
+        return (await this.getOrder(draft.restaurantId, winner.rows[0].id))!;
+      }
       for (const line of draft.lines) {
         const item = menu.find((x) => x.id === line.itemId)!;
         const modifiers = line.modifierIds.map((modifierId) => item.modifiers.find((m) => m.id === modifierId)!);

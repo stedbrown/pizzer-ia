@@ -49,9 +49,14 @@ describe('HTTP application', () => {
 
   it('rejects impossible service settings', async () => {
     const bad = await app.inject({ method: 'PATCH', url: '/api/service', headers: auth, payload: { prepMinutes: 0 } });
-    expect(bad.statusCode).toBe(500);
+    expect(bad.statusCode).toBe(400);
     const badHours = await app.inject({ method: 'PATCH', url: '/api/service', headers: auth, payload: { hours: [{ weekday: 9, opens: '18:00', closes: '22:00' }] } });
-    expect(badHours.statusCode).toBe(500);
+    expect(badHours.statusCode).toBe(400);
+    const badClock = await app.inject({ method: 'PATCH', url: '/api/service', headers: auth, payload: { hours: [{ weekday: 5, opens: '99:00', closes: '22:00' }] } });
+    expect(badClock.statusCode).toBe(400);
+    const badTimezone = await app.inject({ method: 'PATCH', url: '/api/service', headers: auth, payload: { timezone: 'Atlantide/Centro' } });
+    expect(badTimezone.statusCode).toBe(400);
+    expect((await store.getServiceSettings(DEMO_RESTAURANT_ID)).timezone).toBe('Europe/Zurich');
   });
 
   it('takes a callback and lets the pizzeria close it', async () => {

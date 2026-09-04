@@ -101,13 +101,15 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 
 Il modello si sceglie in un solo punto tramite `OPENAI_REALTIME_MODEL` (default in `src/realtime.ts`), quindi l'A/B test non richiede modifiche al codice:
 
-- `gpt-realtime-2.1`: default attuale, il migliore per instruction following, tool use e gestione delle interruzioni;
+- `gpt-realtime-2.1`: default operativo attuale per instruction following, tool use e gestione delle interruzioni;
 - `gpt-realtime-2.1-mini`: baseline rapida ed economica, pienamente supportata;
-- `gpt-realtime-1.5`: indicato dal catalogo OpenAI come modello voice di riferimento; documentato ma non selezionato automaticamente. Non è un modello reasoning, quindi `parallel_tool_calls` viene disattivato in automatico.
+- `gpt-realtime-1.5`: alternativa documentata ma non selezionata automaticamente.
+
+`parallel_tool_calls` resta disattivato per tutti i modelli: le mutazioni della stessa bozza sono intenzionalmente sequenziali, così due prodotti detti nello stesso turno non possono sovrascriversi.
 
 Una risposta parlata per turno: il backend consegna tutti i `function_call_output` di un turno e invia un solo `response.create`, quando nessuna response è attiva e il cliente non sta parlando (`ResponseScheduler`). Prima ogni singolo tool generava un turno vocale a sé, ed era la causa principale dell'effetto questionario.
 
-Gli output dei tool vengono ridotti prima di tornare al modello (`toolOutputForModel`): le mutazioni dell'ordine restituiscono righe, `line_id` e campi già noti, ma **non** prezzi né totale. Il totale arriva solo da `calculate_total` e `get_order_summary`. Il calcolo resta interamente nel backend: qui si filtra soltanto.
+Gli output dei tool vengono ridotti prima di tornare al modello (`toolOutputForModel`): le mutazioni dell'ordine restituiscono soltanto i campi ancora mancanti, senza prezzi né totale; `start_order` restituisce righe e `line_id` quando serve correggere una voce. Il totale arriva solo da `calculate_total` e `get_order_summary`. Il calcolo resta interamente nel backend.
 
 Il VAD resta `server_vad` con `silence_duration_ms: 550` e `interrupt_response: true`, valori già collaudati sulla linea reale. Per provare il turn detection semantico, che attende più a lungo quando il cliente sta ancora pensando, basta `OPENAI_TURN_DETECTION=semantic_vad` (timeout massimi indicativi: `low` 8s, `medium` 4s, `high` 2s). Nessun altro parametro audio è stato toccato.
 
@@ -167,7 +169,7 @@ Checklist manuale per una chiamata in Modalità test:
 
 ## Orari, tempi e disponibilità
 
-Gli orari di apertura, il tempo di preparazione, il supplemento per la consegna e la modalità "serata piena" vivono nel database e si modificano dalla tab `Servizio`. All'accettazione della chiamata il backend calcola lo stato del servizio e lo inietta nel prompt come poche righe di contesto: l'agente sa se siete aperti e quanti minuti servono senza chiamare uno strumento, quindi rispondere a "quanto ci vuole?" non costa latenza. Fuori orario non prende ordini, dice quando riaprite e propone un richiamo.
+Gli orari di apertura, il tempo di preparazione, il supplemento per la consegna e la modalità "serata piena" vivono nel database e si modificano dalla tab `Servizio`. I valori iniziali non vengono trattati come fatti: un operatore deve prima controllarli e usare `Conferma e attiva`. Solo allora il backend calcola lo stato del servizio e lo inietta nel prompt. Fuori orario, con consegne disabilitate o prima della conferma delle impostazioni, il backend non crea l'ordine e l'agente propone un richiamo.
 
 Le fasce orarie sono più di una al giorno per coprire la pausa fra pranzo e cena; una fascia che chiude prima di quando apre supera la mezzanotte (`18:00 → 00:30`). Il fuso è quello del ristorante, non del server: Northflank gira in UTC.
 

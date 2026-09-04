@@ -31,6 +31,8 @@ export interface OpeningSlot {
 }
 
 export interface ServiceSettings {
+  /** Finché non viene confermato dalla dashboard, orari e tempi sono solo valori iniziali e non fatti operativi. */
+  configured: boolean;
   timezone: string;
   prepMinutes: number;
   deliveryExtraMinutes: number;
@@ -41,10 +43,12 @@ export interface ServiceSettings {
 }
 
 export interface ServiceStatus {
+  configured: boolean;
   open: boolean;
   busyMode: boolean;
   acceptsDelivery: boolean;
   localTime: string;
+  businessDate: string;
   todayHours: OpeningSlot[];
   closesAt?: string;
   opensAt?: string;

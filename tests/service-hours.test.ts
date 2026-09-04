@@ -28,6 +28,14 @@ describe('Orari di servizio', () => {
     expect(serviceStatus(late, at('2026-09-04T23:00:00Z')).open).toBe(false);  // 01:00, ormai chiuso
   });
 
+  it('non attribuisce alla fascia di oggi le ore dopo mezzanotte prima che apra', () => {
+    const consecutive = settings({ hours: [
+      { weekday: 5, opens: '18:00', closes: '00:30' },
+      { weekday: 6, opens: '18:00', closes: '02:00' }
+    ] });
+    expect(serviceStatus(consecutive, at('2026-09-04T23:00:00Z')).open).toBe(false); // sabato 01:00 locale
+  });
+
   it('allunga i tempi nelle serate piene e li azzera per la consegna se non è attiva', () => {
     expect(serviceStatus(settings(), at('2026-09-04T16:00:00Z'))).toMatchObject({ pickupMinutes: 20, deliveryMinutes: 35 });
     expect(serviceStatus(settings({ busyMode: true }), at('2026-09-04T16:00:00Z'))).toMatchObject({ pickupMinutes: 35, deliveryMinutes: 50 });
@@ -49,6 +57,13 @@ describe('Orari di servizio', () => {
     const closed = serviceBriefing(serviceStatus(settings(), at('2026-09-04T06:00:00Z')), 'Pizzeria Test');
     expect(closed).toContain('CHIUSI');
     expect(closed).toContain('Non prendere ordini');
+  });
+
+  it('non trasforma i valori iniziali non confermati in fatti operativi', () => {
+    const status = serviceStatus(settings({ configured: false }), at('2026-09-04T16:00:00Z'));
+    const briefing = serviceBriefing(status, 'Pizzeria Test');
+    expect(briefing).toContain('non sono ancora state confermate');
+    expect(briefing).not.toContain('20 minuti');
   });
 });
 

@@ -83,7 +83,7 @@ MENTRE PARLI
 - Non ripetere mai saluto, nome, totale, domande già fatte o cose appena dette. Non riepilogare dopo ogni modifica.
 
 QUANDO NON SAI
-I tempi di attesa e gli orari te li ho scritti sopra: quelli puoi dirli. Tutto il resto che non hai — promozioni, ingredienti non confermati, zone di consegna — non inventarlo: di' che preferisci non dare un'informazione sbagliata. Sugli allergeni puoi riferire quello che risulta a menu, ma se il cliente parla di un'allergia non dare garanzie: serve la pizzeria. Non chiedere dati di carte di credito.
+I tempi di attesa e gli orari scritti sopra puoi dirli solo se il briefing li dichiara confermati; se risultano non verificati, non inventarli. Tutto il resto che non hai — promozioni, ingredienti non confermati, zone di consegna — non inventarlo: di' che preferisci non dare un'informazione sbagliata. Sugli allergeni puoi riferire quello che risulta a menu, ma se il cliente parla di un'allergia non dare garanzie: serve la pizzeria. Non chiedere dati di carte di credito.
 
 PASSARE A UNA PERSONA
 Se il cliente lo chiede, o se l'ordine è anomalo o arriva a ${largeOrderThreshold} pezzi, non confermarlo: ${transfer}.
@@ -109,9 +109,10 @@ export function buildTurnDetection(options: TurnDetectionOptions = {}) {
   return { type: 'server_vad', create_response: true, interrupt_response: true, silence_duration_ms: 550 };
 }
 
-/** parallel_tool_calls è supportato dai modelli reasoning della famiglia gpt-realtime-2. */
+/** La bozza ordine è sequenziale per scelta: due mutazioni simultanee non devono sovrascriversi. */
 export function supportsParallelToolCalls(model: string) {
-  return /^gpt-realtime-2/i.test(model);
+  void model;
+  return false;
 }
 
 export function buildRealtimeSession(args: { restaurantName: string; callerPhone?: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; briefing?: string; humanTransferAvailable?: boolean; testMode?: boolean } & TurnDetectionOptions) {
@@ -167,8 +168,12 @@ function compactMenuItem(item: any, withModifiers: boolean) {
   return {
     id: item?.id, name: item?.name, priceCents: item?.priceCents,
     ...(item?.description ? { description: String(item.description).slice(0, 160) } : {}),
+    ...(item?.category ? { category: String(item.category).slice(0, 80) } : {}),
+    ...(Array.isArray(item?.allergens) && item.allergens.length ? { allergens: item.allergens.slice(0, 20) } : {}),
     ...(withModifiers && Array.isArray(item?.modifiers) && item.modifiers.length
-      ? { modifiers: item.modifiers.map((modifier: any) => ({ id: modifier?.id, name: modifier?.name })) }
+      ? { modifiers: item.modifiers.map((modifier: any) => ({
+        id: modifier?.id, name: modifier?.name, priceCents: modifier?.priceCents, kind: modifier?.kind
+      })) }
       : {})
   };
 }
@@ -355,7 +360,7 @@ export function connectSideband(args: { callId: string; restaurantId: string; re
         output = { ok: closing };
         writeLog({ source: 'TOOL', level: 'INFO', message: closing ? 'end_call accettato' : 'end_call rifiutato: ordine non concluso' });
       } else if (event.name === 'request_callback') {
-        const phone = typeof parsed?.phone === 'string' && parsed.phone.trim() ? parsed.phone.trim() : args.callerPhone;
+        const phone = phoneFromSipHeader(parsed?.phone) ?? phoneFromSipHeader(args.callerPhone);
         const reason = typeof parsed?.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim().slice(0, 200) : 'richiesta dal cliente';
         await args.store.addCallback(args.restaurantId, { callId: args.callId, phone, reason });
         closer.allow();
@@ -363,17 +368,21 @@ export function connectSideband(args: { callId: string; restaurantId: string; re
         writeLog({ source: 'TOOL', level: 'INFO', message: `request_callback registrato: ${reason}` });
       } else {
         const result = await engine.execute(event.name, parsed);
-        output = toolOutputForModel(event.name, result);
-        writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, result) });
+        if (event.name === 'transfer_to_human' && (result as any)?.available) {
+          if (!process.env.HUMAN_TRANSFER_URI) throw new Error('Trasferimento umano non configurato');
+          await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
+          closer.allow();
+          output = toolOutputForModel(event.name, result);
+          writeLog({ source: 'TOOL', level: 'INFO', message: 'transfer_to_human transferred' });
+        } else {
+          output = toolOutputForModel(event.name, result);
+          writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, result) });
+        }
         const state = orderStateMessage(result);
         if (state) writeLog({ source: 'ORDER', level: 'DEBUG', message: state });
         if (event.name === 'confirm_order') {
           closer.allow();
           void notifyCustomer(args, result, writeLog);
-        }
-        if (event.name === 'transfer_to_human') {
-          closer.allow();
-          if (process.env.HUMAN_TRANSFER_URI) await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
         }
       }
     } catch (error) {
@@ -440,6 +449,17 @@ function usageFromEvent(event: any): CallUsage | undefined {
 }
 
 function finiteInt(value: unknown) { return Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : 0; }
+
+/** Estrae solo un numero E.164 da caller-id o URI SIP; gli header completi non arrivano a SMS e callback. */
+export function phoneFromSipHeader(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  const international = value.match(/\+\d{7,15}/)?.[0];
+  if (international) return international;
+  const digits = value.replace(/\D/g, '');
+  if (/^0\d{9}$/.test(digits)) return `+41${digits.slice(1)}`;
+  if (/^41\d{9}$/.test(digits)) return `+${digits}`;
+  return undefined;
+}
 
 function normalizeLargeOrderThreshold(value?: number) {
   return Number.isInteger(value) && Number(value) >= 2 ? Math.min(20, Number(value)) : defaultLargeOrderThreshold;

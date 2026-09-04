@@ -44,12 +44,20 @@ describe('Conversation log', () => {
       event('USER', '"una diavola"', 'call-1', 'DEBUG'),
       event('TOOL', 'confirm_order A-12 → CHF 17.00', 'call-1'),
       event('USER', '"mi passa una persona"', 'call-2', 'DEBUG'),
-      event('TOOL', 'transfer_to_human completed', 'call-2'),
+      event('TOOL', 'transfer_to_human transferred', 'call-2'),
       event('USER', '"buonasera"', 'call-3', 'DEBUG')
     ]);
     expect(conversations.map((conversation) => [conversation.callId, conversation.outcome])).toEqual([
       ['call-3', 'in corso'], ['call-2', 'trasferita'], ['call-1', 'confermato']
     ]);
+  });
+
+  it('does not report a failed transfer as completed', () => {
+    const [conversation = missing()] = buildConversations([
+      event('USER', '"mi passa una persona"', 'call-1', 'DEBUG'),
+      event('TOOL', 'transfer_to_human failed: OpenAI refer failed (500)', 'call-1', 'ERROR')
+    ]);
+    expect(conversation.outcome).toBe('in corso');
   });
 
   it('ignores events that belong to no call', () => {
