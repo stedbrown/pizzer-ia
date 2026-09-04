@@ -11,86 +11,132 @@ const tool = (name: string, description: string, properties: Record<string, unkn
 });
 
 export const realtimeTools = [
-  tool('get_menu', 'Fonte interna: restituisce menu e prezzi ufficiali. Non leggerlo integralmente al cliente salvo richiesta esplicita; per richieste specifiche preferisci search_menu.'),
+  tool('get_menu', 'Conoscenza interna: menu e prezzi ufficiali. Non è un testo da leggere al cliente; per un prodotto citato usa search_menu.'),
   tool('search_menu', 'Cerca internamente prodotti reali nel menu. Preferiscilo quando il cliente nomina un prodotto o una categoria.', { query: { type: 'string' } }, ['query']),
   tool('start_order', 'Inizia o recupera la bozza ordine corrente.'),
-  tool('add_item', 'Aggiunge un prodotto usando solo ID restituiti dal menu.', { item_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['item_id', 'quantity', 'modifier_ids']),
-  tool('remove_item', 'Rimuove una riga dalla bozza.', { line_id: { type: 'string' } }, ['line_id']),
-  tool('update_item', 'Aggiorna quantità o modificatori di una riga.', { line_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['line_id']),
+  tool('add_item', 'Aggiunge un prodotto usando solo ID restituiti dal menu. Puoi chiamarlo più volte nello stesso turno per più prodotti, poi rispondi una sola volta.', { item_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['item_id', 'quantity', 'modifier_ids']),
+  tool('remove_item', 'Rimuove una riga dalla bozza usando il line_id.', { line_id: { type: 'string' } }, ['line_id']),
+  tool('update_item', 'Aggiorna quantità o modificatori di una riga esistente. Usalo quando il cliente cambia idea, invece di ricominciare.', { line_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['line_id']),
   tool('set_customer_name', 'Imposta il nome del cliente.', { name: { type: 'string' } }, ['name']),
   tool('set_fulfillment', 'Imposta ritiro o consegna.', { type: { type: 'string', enum: ['pickup', 'delivery'] } }, ['type']),
   tool('set_delivery_address', 'Imposta indirizzo completo per la consegna.', { address: { type: 'string' } }, ['address']),
-  tool('calculate_total', 'Calcola il totale esclusivamente sul backend.'),
-  tool('get_order_summary', 'Ottiene il riepilogo ufficiale e abilita la successiva conferma.'),
-  tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
-  tool('transfer_to_human', 'Richiede il passaggio a una persona: usalo se il cliente lo chiede, per allergie o informazioni non verificabili, oppure per ordini anomali.')
+  tool('calculate_total', 'Totale ufficiale calcolato dal backend. Chiamalo quando il cliente chiede quanto viene.'),
+  tool('get_order_summary', 'Riepilogo ufficiale con totale; abilita la conferma successiva. Usalo una sola volta, subito prima della conferma finale.'),
+  tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente, pronunciato dopo il riepilogo.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
+  tool('transfer_to_human', 'Passa la chiamata a una persona: se il cliente lo chiede, per allergie o informazioni non verificabili, oppure per ordini anomali.')
 ];
+
+export const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1';
+export const DEFAULT_VOICE = 'marin';
+const defaultGreeting = 'Pizzeria, buongiorno! Mi dica.';
+const defaultLargeOrderThreshold = 20;
 
 export interface VoiceAgentOptions {
   greeting?: string;
   largeOrderThreshold?: number;
 }
 
-const defaultGreeting = 'Pizzeria, buongiorno! Mi dica.';
-const defaultLargeOrderThreshold = 20;
-
 export function centralistInstructions(restaurantName: string, callerPhone?: string, options: VoiceAgentOptions = {}) {
   const greeting = options.greeting?.trim() || defaultGreeting;
   const largeOrderThreshold = normalizeLargeOrderThreshold(options.largeOrderThreshold);
   return `RUOLO
-Sei l'addetto telefonico di ${restaurantName}, una pizzeria reale. Prendi ordini in italiano in modo naturale, rapido e cordiale. Parla come una brava persona che lavora in pizzeria, non come un chatbot o un questionario.
+Sei l'addetto telefonico di ${restaurantName}, una pizzeria vera. Rispondi tu al telefono e prendi gli ordini. Sei una persona che lavora lì: non dire mai di essere un assistente virtuale e non parlare mai di tool, funzioni, database, API, backend, JSON, sistemi o modelli AI.
 
-STILE TELEFONICO
-- Inizia soltanto con: "${greeting}"
-- Usa frasi brevi, ritmo naturale e normalmente UNA domanda alla volta.
-- Usa piccoli riscontri variati, per esempio "Certo", "Va bene", "Ok", "Nessun problema", senza ripetere sempre la stessa formula.
-- Non fare monologhi. Se il cliente ti interrompe, fermati subito e ascolta.
-- Se non capisci, chiedi di ripetere solo la parte dubbia. Non indovinare.
-- Non dire di essere un assistente virtuale e non parlare mai di tool, funzioni, database, API, backend, JSON, sistemi o modelli AI.
+COME PARLI
+- Italiano parlato, cordiale, informale ma professionale. Frasi corte, da telefonata.
+- Una risposta = una o due frasi. Normalmente UNA domanda alla volta.
+- Riscontri brevi e variati: "Certo", "Va bene", "Ok", "Nessun problema", "Ci siamo", "Un attimo". Cambia formula: non dire "perfetto" a ogni frase.
+- Niente monologhi, niente elenchi recitati, niente formule da call center.
+- Se il cliente ti interrompe, smetti subito di parlare e ascolta. Non finire la frase.
+- Se non hai capito, chiedi di ripetere solo il pezzo dubbio: "Scusi, l'ultima non l'ho presa bene, me la ripete?". Non indovinare quello che pensi abbia detto.
 
-CONTESTO E ORDINE
-- Mantieni il contesto dell'intera chiamata. Registra subito tutte le informazioni dette spontaneamente, anche se arrivano insieme o in ordine diverso.
-- Non chiedere mai di nuovo nome, articoli, ritiro/consegna o indirizzo se sono già noti. Chiedi soltanto ciò che manca.
-- Per ritiro servono articoli, nome e modalità pickup. Per consegna servono articoli, nome, modalità delivery e indirizzo.
-- Il caller ID ${callerPhone ? 'è già disponibile al backend: non chiederlo' : 'non è disponibile: chiedi un recapito solo se realmente necessario'}.
-- Dopo una modifica rispondi in modo minimo, per esempio "Va bene, una sola", e continua dal punto corrente. Non ricominciare l'ordine.
+APERTURA
+Apri la chiamata soltanto con: "${greeting}"
+Poi non salutare più e non ripresentarti.
 
-MENU E PREZZI
-- Usa gli strumenti in silenzio: sono invisibili al cliente. Non dire "aggiungo al carrello", "consulto il database" o "procedo ora".
-- Preferisci search_menu quando il cliente nomina un prodotto. get_menu è una fonte interna, non un testo da leggere.
-- NON elencare spontaneamente tutto il menu. Se chiede cosa avete, fai una sola domanda utile (classico, piccante o vegetariano) oppure proponi 2-3 opzioni pertinenti. Elenca tutto solo se lo chiede esplicitamente.
-- Comunica un prezzo solo se il cliente lo chiede, se serve per decidere o nel riepilogo finale.
-- Non inventare mai prodotti, ingredienti, disponibilità, prezzi, modificatori, supplementi, sconti o totali. Gli strumenti e il backend sono l'unica fonte di verità; non calcolare prezzi mentalmente.
-- Se un prodotto non esiste, dillo brevemente e proponi al massimo un'alternativa reale e vicina.
+COME SUONA
+Cliente: "Due Diavole e una Margherita senza mozzarella." → Tu: "Certo. Ritiro o consegna?"
+Cliente: "Avete la Diavola?" → Tu: "Sì, ce l'abbiamo."
+Cliente: "Quanto viene?" → Tu: "Diciassette franchi."
+Cliente: "No aspetta, una Diavola sola." → Tu: "Va bene, una sola."
+Cliente: "Ciao, come va? Senti, volevo prendere un paio di pizze." → Tu: "Bene grazie, mi dica pure."
+Cliente: "Non so cosa prendere." → Tu: "Le va qualcosa di piccante o preferisce restare sul classico?"
+Non dire mai cose come "Ho aggiunto l'articolo al carrello", "Sto consultando il database", "Secondo il menu disponibile", "Le opzioni disponibili sono", "Procederò ora con", "Come assistente virtuale".
 
-ANTI-RIPETIZIONE
-- NON ripetere saluto, nome, ordine completo, prezzo, domanda già risposta o informazione appena detta.
-- NON riepilogare dopo ogni aggiunta o correzione.
-- Riepiloga soltanto per chiarire un'ambiguità, se il cliente lo chiede, e UNA sola volta prima della conferma finale.
+ASCOLTO E CONTESTO
+- Il cliente ti dà più informazioni insieme e in ordine sparso: prendile tutte al primo colpo. "Ciao, sono Stefano, due Diavole per ritiro" significa che nome, articoli e modalità sono già a posto.
+- Non seguire una scaletta fissa e non fare domande di cui conosci già la risposta. Chiedi soltanto ciò che manca.
+- Per il ritiro servono articoli e nome. Per la consegna servono articoli, nome e indirizzo.
+- Il caller ID ${callerPhone ? 'è già disponibile al backend: non chiederlo' : 'non è disponibile: chiedi un recapito solo se serve davvero'}.
+- Se cambia idea, aggiorna la riga con update_item o remove_item e riparti dal punto in cui eravate: "Va bene, una sola." Non ricominciare l'ordine da zero e non mostrare fastidio.
 
-ERRORI E LIMITI
-- Non inventare tempi, allergeni, consegne, promozioni o informazioni non presenti nei risultati. Di' che preferisci non dare un'informazione sbagliata e proponi una persona.
-- Se uno strumento fallisce, non nominare errori tecnici: di' una sola volta "Un attimo, non riesco a verificare questa cosa." Riprova solo se sensato; se persiste usa transfer_to_human.
-- Per allergie non dare garanzie sanitarie: serve conferma della pizzeria e devi usare transfer_to_human.
-- Se il cliente chiede una persona, usa subito transfer_to_human dopo "Certo, un momento."
-- Se la richiesta è anomala, incerta o raggiunge ${largeOrderThreshold} articoli, non confermarla: di' "Per un ordine così grande preferisco passarla direttamente alla pizzeria. Un momento." e usa transfer_to_human.
-- Non raccogliere dati di carte di credito.
+MENU
+- Il menu è una tua conoscenza interna, non un testo da leggere. NON elencare spontaneamente tutto il menu.
+- Se il cliente nomina un prodotto usa search_menu e rispondi corto: "Sì, ce l'abbiamo" oppure "Quella purtroppo non ce l'abbiamo".
+- Se chiede cosa avete, non recitare il listino: fai una domanda utile (piccante, classica, vegetariana) oppure proponi due o tre cose pertinenti. Elenchi tutto solo se te lo chiede esplicitamente.
+- Se un prodotto non esiste, dillo in due parole e proponi al massimo un'alternativa reale. Non inventare pizze, ingredienti, supplementi o disponibilità.
 
-CONFERMA FINALE
-- Quando l'ordine è completo usa get_order_summary, poi pronuncia UN solo riepilogo naturale con articoli, quantità, modifiche, modalità, nome, indirizzo se necessario e totale.
-- Termina il riepilogo con "Conferma?" e attendi la risposta.
-- Usa confirm_order soltanto dopo un sì inequivocabile pronunciato DOPO quel riepilogo, come "sì", "confermo", "esatto" o "va bene".
-- Non confermare con "forse", "aspetta", "non so" o "fammi pensare". Ogni modifica successiva richiede un nuovo get_order_summary e una nuova conferma esplicita.`;
+PREZZI
+- I prezzi li decide la pizzeria, non tu: non calcolare prezzi mentalmente e non stimarli mai.
+- Dici un prezzo solo se te lo chiedono, se serve per scegliere o nel riepilogo finale. Per il totale usa calculate_total.
+
+STRUMENTI, INVISIBILI AL CLIENTE
+- Usa gli strumenti in silenzio, senza annunciarli e senza raccontare cosa stai facendo.
+- Registra subito tutto quello che il cliente ha detto: puoi usare più strumenti nello stesso turno, per esempio tre add_item per tre pizze, e poi dare UNA sola risposta breve.
+- Se serve qualche istante di attesa: "Un attimo." Senza abusarne.
+- Se uno strumento non risponde, niente termini tecnici: "Un attimo, questa cosa non riesco a verificarla." Se il problema resta, passa la chiamata con transfer_to_human.
+
+NON RIPETERE
+- NON ripetere saluto, nome del cliente, totale, una domanda già risposta o un'informazione appena detta.
+- NON riepilogare dopo ogni aggiunta o correzione: dopo una modifica bastano due parole.
+- Il riepilogo completo si fa UNA volta sola, prima della conferma finale, oppure se il cliente lo chiede.
+
+QUANDO NON SAI
+- Tempi di attesa, allergeni, consegne, promozioni, ingredienti non confermati: non inventare niente. Di': "Su questo preferisco non dirle una cosa sbagliata, se vuole la passo in pizzeria." e usa transfer_to_human se accetta.
+- Per le allergie non dare garanzie sanitarie: serve la pizzeria, usa transfer_to_human.
+- Non chiedere e non accettare dati di carte di credito.
+
+PASSAGGIO A UNA PERSONA
+- Se chiede di parlare con qualcuno: "Certo, un momento." e usa subito transfer_to_human.
+- Se la richiesta è anomala o arriva a ${largeOrderThreshold} pezzi, non confermarla: "Per un ordine così grande preferisco passarla direttamente alla pizzeria. Un momento." e usa transfer_to_human.
+
+CHIUSURA
+- Quando hai tutto chiama get_order_summary e pronuncia UN solo riepilogo scorrevole, come lo direbbe una persona: "Allora, una Diavola e una Margherita senza mozzarella, per ritiro a nome Stefano. Totale trentuno franchi. Conferma?"
+- Usa confirm_order soltanto dopo un sì inequivocabile detto DOPO quel riepilogo: "sì", "confermo", "esatto", "va bene".
+- Con "forse", "aspetta", "non so", "fammi pensare" non confermare: aspetta.
+- Se dopo il riepilogo cambia qualcosa, aggiorna, richiama get_order_summary e chiedi di nuovo conferma.
+- A ordine confermato chiudi in una frase breve, senza promettere tempi che non conosci, e non rileggere l'ordine.`;
 }
 
-export function buildRealtimeSession(args: { restaurantName: string; callerPhone?: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; testMode?: boolean }) {
+export interface TurnDetectionOptions {
+  turnDetection?: string;
+  vadEagerness?: string;
+}
+
+/** server_vad resta il default collaudato; semantic_vad è opt-in per l'A/B su barge-in e pause di riflessione. */
+export function buildTurnDetection(options: TurnDetectionOptions = {}) {
+  const mode = options.turnDetection?.trim().toLowerCase();
+  if (mode === 'semantic_vad' || mode === 'semantic') {
+    const eagerness = ['low', 'medium', 'high', 'auto'].includes(String(options.vadEagerness).toLowerCase())
+      ? String(options.vadEagerness).toLowerCase() : 'medium';
+    return { type: 'semantic_vad', create_response: true, interrupt_response: true, eagerness };
+  }
+  return { type: 'server_vad', create_response: true, interrupt_response: true, silence_duration_ms: 550 };
+}
+
+/** parallel_tool_calls è supportato dai modelli reasoning della famiglia gpt-realtime-2. */
+export function supportsParallelToolCalls(model: string) {
+  return /^gpt-realtime-2/i.test(model);
+}
+
+export function buildRealtimeSession(args: { restaurantName: string; callerPhone?: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; testMode?: boolean } & TurnDetectionOptions) {
   return {
     type: 'realtime', model: args.model, instructions: centralistInstructions(args.restaurantName, args.callerPhone, args),
-    output_modalities: ['audio'], max_output_tokens: 700, parallel_tool_calls: false,
+    output_modalities: ['audio'], max_output_tokens: 700, parallel_tool_calls: supportsParallelToolCalls(args.model),
     audio: {
       input: {
         ...(args.testMode ? { transcription: { model: 'gpt-live-transcribe', languages: ['it'], delay: 'low' } } : {}),
-        turn_detection: { type: 'server_vad', create_response: true, interrupt_response: true, silence_duration_ms: 550 }
+        turn_detection: buildTurnDetection(args)
       },
       output: { voice: args.voice }
     },
@@ -98,7 +144,90 @@ export function buildRealtimeSession(args: { restaurantName: string; callerPhone
   };
 }
 
-export async function acceptRealtimeCall(args: { callId: string; restaurantName: string; callerPhone?: string; apiKey: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; testMode?: boolean }) {
+const MENU_HINT = 'Conoscenza interna. Non leggere questo elenco al cliente: rispondi in una frase breve e proponi al massimo due o tre cose.';
+const DRAFT_HINT = 'Registrato. Dai un riscontro brevissimo e continua: niente riepilogo, niente prezzi, niente totale.';
+
+/**
+ * Riduce l'output dei tool a ciò che serve al modello per parlare bene.
+ * Le mutazioni non restituiscono prezzi né totale: erano la causa del riepilogo ripetuto a ogni modifica.
+ * Il backend resta l'unica fonte di verità: qui non si calcola nulla, si filtra soltanto.
+ */
+export function toolOutputForModel(name: string, result: unknown): unknown {
+  if (result === null || typeof result !== 'object') return result;
+  if (name === 'get_menu' || name === 'search_menu') {
+    const items = Array.isArray(result) ? result : [];
+    return { items: items.map(compactMenuItem), hint: MENU_HINT };
+  }
+  const value = result as Record<string, any>;
+  if (name === 'confirm_order') {
+    return { ...value, hint: 'Ordine registrato. Chiudi con una frase breve, senza promettere tempi e senza rileggere l\'ordine.' };
+  }
+  if (name === 'transfer_to_human') {
+    return { ...value, hint: 'Di\' soltanto "Certo, un momento." e smetti di prendere l\'ordine.' };
+  }
+  if (name === 'get_order_summary') {
+    return { ...compactDraft(value), totalCents: value.totalCents, currency: value.currency,
+      hint: 'Riepiloga UNA sola volta con parole tue, in modo scorrevole, e chiudi con "Conferma?". Non elencare i prezzi riga per riga.' };
+  }
+  if (name === 'calculate_total') {
+    return { ...compactDraft(value), totalCents: value.totalCents, currency: value.currency,
+      hint: 'Comunica solo il totale, in una frase breve.' };
+  }
+  if (!Array.isArray(value.items)) return result;
+  return { ok: true, ...compactDraft(value), hint: DRAFT_HINT };
+}
+
+function compactMenuItem(item: any) {
+  return {
+    id: item?.id, name: item?.name, priceCents: item?.priceCents,
+    ...(item?.description ? { description: String(item.description).slice(0, 160) } : {}),
+    ...(Array.isArray(item?.modifiers) && item.modifiers.length
+      ? { modifiers: item.modifiers.map((modifier: any) => ({ id: modifier?.id, name: modifier?.name })) }
+      : {})
+  };
+}
+
+function compactDraft(value: Record<string, any>) {
+  const lines = Array.isArray(value.items) ? value.items.map((item: any) => ({
+    line_id: item?.lineId, name: item?.name, quantity: item?.quantity,
+    ...(Array.isArray(item?.modifiers) && item.modifiers.length ? { modifiers: item.modifiers.map((modifier: any) => modifier?.name) } : {})
+  })) : [];
+  return {
+    lines,
+    customerName: value.customerName ?? null,
+    fulfillment: value.fulfillment ?? null,
+    deliveryAddress: value.deliveryAddress ?? null,
+    ...(value.confirmedOrderId ? { confirmedOrderId: value.confirmedOrderId } : {})
+  };
+}
+
+/**
+ * Una sola risposta parlata per turno.
+ * Prima si inviava response.create dopo ogni singolo tool: più tool nello stesso turno
+ * producevano più risposte vocali di fila, e una response ancora attiva veniva interrotta.
+ */
+export class ResponseScheduler {
+  private active = false;
+  private pending = 0;
+  private owed = false;
+  private userTurn = false;
+  constructor(private readonly send: () => void) {}
+
+  responseCreated() { this.active = true; this.owed = false; this.userTurn = false; }
+  responseFinished() { this.active = false; this.flush(); }
+  toolStarted() { this.pending += 1; }
+  toolFinished() { this.pending = Math.max(0, this.pending - 1); this.owed = !this.userTurn; this.flush(); }
+  /** Il cliente sta parlando: risponderà il VAD, non dobbiamo accodare un turno nostro sopra il suo. */
+  userSpeechStarted() { this.owed = false; this.userTurn = true; }
+
+  private flush() {
+    if (!this.owed || this.active || this.pending > 0) return;
+    this.owed = false;
+    this.send();
+  }
+}
+
+export async function acceptRealtimeCall(args: { callId: string; restaurantName: string; callerPhone?: string; apiKey: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; testMode?: boolean } & TurnDetectionOptions) {
   const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(args.callId)}/accept`, {
     method: 'POST', headers: { Authorization: `Bearer ${args.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(buildRealtimeSession(args))
@@ -110,6 +239,9 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
   const ws = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(args.callId)}`, { headers: { Authorization: `Bearer ${args.apiKey}` } });
   const writeLog = (event: LogInput) => { void args.log?.({ ...event, callId: event.callId ?? args.callId }).catch(() => undefined); };
   const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone, args.log);
+  const scheduler = new ResponseScheduler(() => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.create' }));
+  });
   ws.on('open', () => {
     void args.store.markCallConnected(args.callId).catch(() => undefined);
     writeLog({ source: 'SIDEBAND', level: 'INFO', message: 'WebSocket connected' });
@@ -119,7 +251,12 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
   ws.on('message', async (data) => {
     let event: any;
     try { event = JSON.parse(data.toString()); } catch { return; }
+    if (event.type === 'response.created') {
+      scheduler.responseCreated();
+      return;
+    }
     if (event.type === 'response.done') {
+      scheduler.responseFinished();
       const usage = usageFromEvent(event);
       if (usage) await args.store.addCallUsage(args.callId, usage);
       if (await args.store.getTestModeUntil(args.restaurantId)) writeLog({ source: 'OPENAI', level: 'DEBUG', message: usage ? `Response completed (${usage.audioInputTokens + usage.audioOutputTokens} audio tokens)` : 'Response completed' });
@@ -129,8 +266,9 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
       writeLog({ source: 'OPENAI', level: 'ERROR', message: event.error?.message ?? 'Realtime error' });
       return;
     }
-    if (event.type === 'input_audio_buffer.speech_started' && await isTestMode(args.store, args.restaurantId)) {
-      writeLog({ source: 'CALL', level: 'DEBUG', message: 'User speech started' });
+    if (event.type === 'input_audio_buffer.speech_started') {
+      scheduler.userSpeechStarted();
+      if (await isTestMode(args.store, args.restaurantId)) writeLog({ source: 'CALL', level: 'DEBUG', message: 'User speech started' });
       return;
     }
     if (event.type === 'input_audio_buffer.speech_stopped' && await isTestMode(args.store, args.restaurantId)) {
@@ -146,13 +284,17 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
       return;
     }
     if (event.type !== 'response.function_call_arguments.done') return;
+    scheduler.toolStarted();
     let output: unknown;
     let parsed: any;
     try {
       parsed = event.arguments ? JSON.parse(event.arguments) : {};
       writeLog({ source: 'TOOL', level: 'DEBUG', message: `${event.name ?? 'unknown'} called` });
-      output = await engine.execute(event.name, parsed);
-      writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, output) });
+      const result = await engine.execute(event.name, parsed);
+      output = toolOutputForModel(event.name, result);
+      writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, result) });
+      const state = orderStateMessage(result);
+      if (state) writeLog({ source: 'ORDER', level: 'DEBUG', message: state });
       if (event.name === 'transfer_to_human' && process.env.HUMAN_TRANSFER_URI) {
         await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
       }
@@ -160,9 +302,10 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
       output = { error: error instanceof Error ? error.message : 'Errore del backend' };
       writeLog({ source: 'TOOL', level: 'ERROR', message: `${event.name ?? 'unknown'} failed: ${error instanceof Error ? error.message : 'backend error'}` });
     }
-    if (ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
-    ws.send(JSON.stringify({ type: 'response.create' }));
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
+    }
+    scheduler.toolFinished();
   });
   ws.on('close', () => {
     void args.store.finishCall(args.callId).catch(() => undefined);
@@ -180,6 +323,18 @@ function toolMessage(name: string, input: any, output: any) {
   }
   if (name === 'confirm_order') return `confirm_order ${output?.orderNumber ?? 'completed'}`;
   return `${name} completed`;
+}
+
+/** Stato ordine compatto per i Live Logs: nessun dato personale oltre al nome già presente in dashboard. */
+export function orderStateMessage(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object' || !Array.isArray((result as any).items)) return undefined;
+  const value = result as Record<string, any>;
+  const quantity = value.items.reduce((sum: number, item: any) => sum + (Number(item?.quantity) || 0), 0);
+  const parts = [`${value.items.length} righe`, `${quantity} pezzi`];
+  if (value.fulfillment) parts.push(value.fulfillment);
+  if (value.customerName) parts.push('nome ok');
+  if (value.deliveryAddress) parts.push('indirizzo ok');
+  return `Order state: ${parts.join(' · ')}`;
 }
 
 function usageFromEvent(event: any): CallUsage | undefined {

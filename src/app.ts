@@ -8,7 +8,7 @@ import type { Store } from './store.js';
 import { DEMO_RESTAURANT_ID } from './store.js';
 import type { NewLiveLogEvent, OrderStatus } from './types.js';
 import { verifyOpenAIWebhook } from './webhook-signature.js';
-import { acceptRealtimeCall, connectSideband } from './realtime.js';
+import { acceptRealtimeCall, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE } from './realtime.js';
 import { publicLogEvent, safeLogEvent } from './live-logs.js';
 
 export interface AppOptions {
@@ -20,6 +20,8 @@ export interface AppOptions {
   voice?: string;
   greeting?: string;
   largeOrderThreshold?: number;
+  turnDetection?: string;
+  vadEagerness?: string;
   heartbeatSecret?: string;
   publicDir?: string;
 }
@@ -195,8 +197,9 @@ export function buildApp(options: AppOptions) {
       const testMode = Boolean(await options.store.getTestModeUntil(restaurant.id));
       await acceptRealtimeCall({
         callId, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey,
-        model: options.realtimeModel ?? 'gpt-realtime-2.1-mini', voice: options.voice ?? 'marin',
-        greeting: options.greeting, largeOrderThreshold: options.largeOrderThreshold, testMode
+        model: options.realtimeModel ?? DEFAULT_REALTIME_MODEL, voice: options.voice ?? DEFAULT_VOICE,
+        greeting: options.greeting, largeOrderThreshold: options.largeOrderThreshold,
+        turnDetection: options.turnDetection, vadEagerness: options.vadEagerness, testMode
       });
       await emitLog({ source: 'OPENAI', level: 'INFO', message: 'Realtime call accepted', callId });
       connectSideband({ callId, restaurantId: restaurant.id, callerPhone: from, apiKey: options.apiKey, store: options.store, log: emitLog });

@@ -18,6 +18,8 @@ const app = buildApp({
   voice: process.env.OPENAI_VOICE,
   greeting: process.env.OPENAI_GREETING,
   largeOrderThreshold: optionalInt('LARGE_ORDER_THRESHOLD'),
+  turnDetection: process.env.OPENAI_TURN_DETECTION,
+  vadEagerness: process.env.OPENAI_VAD_EAGERNESS,
   heartbeatSecret: process.env.HEARTBEAT_SECRET
 });
 
