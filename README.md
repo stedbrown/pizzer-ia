@@ -37,6 +37,8 @@ npm run dev
 
 Le migrazioni e il seed demo vengono applicati automaticamente all'avvio. La dashboard è su `http://localhost:3000/`, protetta con HTTP Basic Auth (utente `admin`). La probe pubblica è `GET /health`.
 
+La dashboard è un'app React compilata da Vite: `npm run build` produce `dist/web`, che Fastify serve dietro autenticazione. Per lavorarci con ricarica a caldo si usa `npm run dev` in un terminale e `npm run dev:web` nell'altro, che inoltra `/api` al backend locale. Senza `dist/web` la rotta `/` risponde 503 e le API restano funzionanti.
+
 ## Comandi
 
 ```bash
@@ -135,19 +137,25 @@ Checklist manuale per una chiamata in Modalità test:
 - `GET /api/orders` — elenco ordini, autenticato
 - `PATCH /api/orders/:id/status` — avanzamento ordine, autenticato
 - `GET /api/menu` — menu e modificatori, autenticato
-- `PATCH /api/menu/:id` — nome, prezzo e disponibilità, autenticato
+- `PATCH /api/menu/:id` — nome, prezzo, categoria, allergeni, disponibilità e finito-per-oggi, autenticato
+- `GET|PATCH /api/service` — orari, tempi di attesa, serata piena e consegne, autenticato
+- `GET /api/callbacks` — richiami da fare, autenticato
+- `POST /api/callbacks/:id/resolve` — segna un richiamo come fatto, autenticato
 
 ## Struttura
 
 - `src/app.ts` — HTTP, autenticazione, API e webhook
 - `src/realtime.ts` — accettazione SIP, prompt, tool schema e sideband
 - `src/order-engine.ts` — macchina di stato e calcolo prezzi server-side
+- `src/service-hours.ts` — orari, tempi di attesa e briefing iniettato nel prompt
+- `src/conversations.ts` — telefonate ricostruite dagli eventi già registrati
+- `src/notify.ts` — conferma scritta al cliente tramite webhook generico
 - `src/postgres-store.ts` — persistenza PostgreSQL
-- `migrations/` — schema e menu demo
-- `public/` — dashboard responsive
+- `migrations/` — schema, menu demo e impostazioni di servizio
+- `web/` — dashboard React + Vite, bundle in `dist/web`
 - `src/live-logs.ts` — classificazione e redaction centralizzata
 - `telephony/asterisk/` — template e heartbeat, mai applicati automaticamente
-- `tests/` — test HTTP, firma webhook, idempotenza e motore ordini
+- `tests/` — test HTTP, firma webhook, idempotenza, orari e motore ordini
 
 ## Troubleshooting
 
@@ -156,6 +164,16 @@ Checklist manuale per una chiamata in Modalità test:
 - Chiamata non arriva: seguire in ordine Hello World, Echo e poi OpenAI; verificare registrazione sipcall, Project ID, TLS/5061, codec e RTP.
 - Chiamata arriva ma non parla: controllare API key, disponibilità del modello e log dell'accept endpoint.
 - Tool fallisce: verificare che menu/modificatori siano attivi e che gli ID provengano dai risultati del backend.
+
+## Orari, tempi e disponibilità
+
+Gli orari di apertura, il tempo di preparazione, il supplemento per la consegna e la modalità "serata piena" vivono nel database e si modificano dalla tab `Servizio`. All'accettazione della chiamata il backend calcola lo stato del servizio e lo inietta nel prompt come poche righe di contesto: l'agente sa se siete aperti e quanti minuti servono senza chiamare uno strumento, quindi rispondere a "quanto ci vuole?" non costa latenza. Fuori orario non prende ordini, dice quando riaprite e propone un richiamo.
+
+Le fasce orarie sono più di una al giorno per coprire la pausa fra pranzo e cena; una fascia che chiude prima di quando apre supera la mezzanotte (`18:00 → 00:30`). Il fuso è quello del ristorante, non del server: Northflank gira in UTC.
+
+A ordine confermato il backend calcola l'ora di pronto dalle impostazioni, la salva sull'ordine e la passa all'agente in `readyTime`. Il modello non stima mai i tempi da solo.
+
+Nel menu, "finito per oggi" toglie un prodotto all'agente immediatamente e lo rimette da solo il giorno successivo, senza che nessuno debba ricordarsene.
 
 ## Chiusura della chiamata
 

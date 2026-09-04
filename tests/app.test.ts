@@ -33,6 +33,46 @@ describe('HTTP application', () => {
     const stale = await app.inject({ method: 'GET', url: '/api/telephony/status', headers: auth });
     expect(stale.json()).toMatchObject({ heartbeatState: 'stale', asteriskOnline: null, sipRegistration: 'unknown' });
   });
+  it('reads and saves the service settings the agent depends on', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/service' })).statusCode).toBe(401);
+    const initial = await app.inject({ method: 'GET', url: '/api/service', headers: auth });
+    expect(initial.json()).toMatchObject({ settings: { prepMinutes: 20, acceptsDelivery: true }, smsConfigured: false, humanTransfer: false });
+    const saved = await app.inject({
+      method: 'PATCH', url: '/api/service', headers: auth,
+      payload: { prepMinutes: 30, busyMode: true, hours: [{ weekday: 5, opens: '18:00', closes: '00:30' }] }
+    });
+    // Serata piena e preparazione si sommano nel tempo che l'agente comunica al cliente.
+    expect(saved.json().settings).toMatchObject({ prepMinutes: 30, busyMode: true });
+    expect(saved.json().status.pickupMinutes).toBe(45);
+    expect(saved.json().settings.hours).toEqual([{ weekday: 5, opens: '18:00', closes: '00:30' }]);
+  });
+
+  it('rejects impossible service settings', async () => {
+    const bad = await app.inject({ method: 'PATCH', url: '/api/service', headers: auth, payload: { prepMinutes: 0 } });
+    expect(bad.statusCode).toBe(500);
+    const badHours = await app.inject({ method: 'PATCH', url: '/api/service', headers: auth, payload: { hours: [{ weekday: 9, opens: '18:00', closes: '22:00' }] } });
+    expect(badHours.statusCode).toBe(500);
+  });
+
+  it('takes a callback and lets the pizzeria close it', async () => {
+    await store.addCallback(DEMO_RESTAURANT_ID, { callId: 'call-1', phone: '+41790000000', reason: 'vuole parlare con una persona' });
+    const list = await app.inject({ method: 'GET', url: '/api/callbacks', headers: auth });
+    expect(list.json()).toHaveLength(1);
+    const id = list.json()[0].id;
+    expect((await app.inject({ method: 'POST', url: `/api/callbacks/${id}/resolve`, headers: auth })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/callbacks', headers: auth })).json()[0].handledAt).toBeTruthy();
+    expect((await app.inject({ method: 'POST', url: '/api/callbacks/missing/resolve', headers: auth })).statusCode).toBe(404);
+  });
+
+  it('takes a product off the menu for the day and puts it back tomorrow', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    await app.inject({ method: 'PATCH', url: '/api/menu/item-1', headers: auth, payload: { soldOutUntil: today } });
+    expect(await store.getMenu(DEMO_RESTAURANT_ID)).toHaveLength(4);
+    expect(await store.getMenu(DEMO_RESTAURANT_ID, undefined, true)).toHaveLength(5);
+    await app.inject({ method: 'PATCH', url: '/api/menu/item-1', headers: auth, payload: { soldOutUntil: null } });
+    expect(await store.getMenu(DEMO_RESTAURANT_ID)).toHaveLength(5);
+  });
+
   it('reports zero monthly usage without inventing costs', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/usage/monthly', headers: auth });
     expect(response.statusCode).toBe(200);

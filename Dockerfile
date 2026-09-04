@@ -2,10 +2,10 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
-COPY tsconfig.json eslint.config.js ./
+COPY tsconfig.json eslint.config.js vite.config.ts ./
 COPY src ./src
+COPY web ./web
 COPY tests ./tests
-COPY public ./public
 COPY migrations ./migrations
 RUN npm run build
 
@@ -15,7 +15,6 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
-COPY public ./public
 COPY migrations ./migrations
 EXPOSE 3000
 USER node

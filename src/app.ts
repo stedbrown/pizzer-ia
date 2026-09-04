@@ -1,4 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -32,7 +34,10 @@ export interface AppOptions {
 export function buildApp(options: AppOptions) {
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 1_000_000 });
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
-  app.register(fastifyStatic, { root: options.publicDir ?? join(process.cwd(), 'public'), decorateReply: true });
+  // La dashboard è un bundle Vite: solo gli asset con hash sono pubblici, l'index resta dietro autenticazione.
+  const webDir = options.publicDir ?? join(process.cwd(), 'dist', 'web');
+  const webBuilt = existsSync(join(webDir, 'index.html'));
+  if (webBuilt) app.register(fastifyStatic, { root: join(webDir, 'assets'), prefix: '/assets/', decorateReply: false });
   const liveClients = new Map<ServerResponse, NodeJS.Timeout>();
   app.addHook('onClose', async () => {
     for (const [client, timer] of liveClients) {
@@ -71,9 +76,10 @@ export function buildApp(options: AppOptions) {
     try { await options.store.health(); return { status: 'ok', database: 'connected' }; }
     catch { return reply.code(503).send({ status: 'error', database: 'unavailable' }); }
   });
-  app.get('/', { preHandler: auth }, (_request, reply) => reply.sendFile('index.html'));
-  app.get('/app.js', { preHandler: auth }, (_request, reply) => reply.sendFile('app.js'));
-  app.get('/styles.css', { preHandler: auth }, (_request, reply) => reply.sendFile('styles.css'));
+  app.get('/', { preHandler: auth }, async (_request, reply) => {
+    if (!webBuilt) return reply.code(503).send({ error: 'Dashboard non compilata: eseguire npm run build' });
+    return reply.type('text/html; charset=utf-8').send(await readFile(join(webDir, 'index.html'), 'utf8'));
+  });
 
   app.get('/api/orders', { preHandler: auth }, async () => options.store.listOrders(DEMO_RESTAURANT_ID));
   app.patch('/api/orders/:id/status', { preHandler: auth }, async (request, reply) => {
