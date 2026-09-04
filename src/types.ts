@@ -166,7 +166,7 @@ export interface Conversation {
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
-  outcome: 'confermato' | 'trasferita' | 'in corso' | 'chiusa';
+  outcome: 'confermato' | 'trasferita' | 'in corso' | 'chiusa' | 'interrotta';
   headline?: string;
   metrics: ConversationMetrics;
   turns: ConversationTurn[];

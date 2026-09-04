@@ -7,6 +7,7 @@ const roleBySource: Partial<Record<LiveLogEvent['source'], ConversationTurn['rol
 const LATENCY = /^Risposta iniziata dopo (\d+) ms$/;
 const BARGE_IN = /^Barge-in/;
 const CONFIRMED = /^confirm_order (\S+) → (.+)$/;
+const ACTIVE_CALL_WINDOW_MS = 10 * 60 * 1000;
 
 /** Gli eventi tecnici restano nei Live Logs: qui entra solo ciò che racconta la telefonata. */
 function conversational(event: LiveLogEvent) {
@@ -19,22 +20,22 @@ function conversational(event: LiveLogEvent) {
  * nessuna nuova tabella, stessa redaction e stessa retention dei Live Logs.
  * Le trascrizioni esistono solo per le chiamate fatte in Modalità test.
  */
-export function buildConversations(events: LiveLogEvent[]): Conversation[] {
+export function buildConversations(events: LiveLogEvent[], now = new Date()): Conversation[] {
   const byCall = new Map<string, LiveLogEvent[]>();
-  for (const event of events.filter(conversational)) {
+  for (const event of events.filter((candidate) => Boolean(candidate.callId))) {
     const bucket = byCall.get(event.callId!) ?? [];
     bucket.push(event);
     byCall.set(event.callId!, bucket);
   }
-  const conversations = [...byCall.entries()].map(([callId, bucket]) => {
+  const conversations = [...byCall.entries()].filter(([, bucket]) => bucket.some(conversational)).map(([callId, bucket]) => {
     const ordered = [...bucket].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
     const startedAt = ordered[0]!.timestamp;
     const endedAt = ordered[ordered.length - 1]!.timestamp;
-    const turns = buildTurns(ordered, Date.parse(startedAt));
+    const turns = buildTurns(ordered.filter(conversational), Date.parse(startedAt));
     return {
       callId, startedAt, endedAt,
       durationSeconds: Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(startedAt)) / 1000)),
-      outcome: outcomeOf(ordered),
+      outcome: outcomeOf(ordered, now.getTime()),
       headline: headlineOf(ordered),
       metrics: metricsOf(turns),
       turns
@@ -92,9 +93,11 @@ function headlineOf(ordered: LiveLogEvent[]) {
   return undefined;
 }
 
-function outcomeOf(ordered: LiveLogEvent[]): Conversation['outcome'] {
+function outcomeOf(ordered: LiveLogEvent[], nowMs: number): Conversation['outcome'] {
   const tools = ordered.filter((event) => event.source === 'TOOL').map((event) => event.message);
   if (tools.some((message) => message.startsWith('confirm_order'))) return 'confermato';
   if (tools.some((message) => message === 'transfer_to_human transferred')) return 'trasferita';
-  return ordered.some((event) => event.source === 'CALL' && event.message === 'Call ended') ? 'chiusa' : 'in corso';
+  if (ordered.some((event) => event.source === 'CALL' && event.message === 'Call ended')) return 'chiusa';
+  const lastActivityMs = Date.parse(ordered[ordered.length - 1]!.timestamp);
+  return nowMs - lastActivityMs > ACTIVE_CALL_WINDOW_MS ? 'interrotta' : 'in corso';
 }

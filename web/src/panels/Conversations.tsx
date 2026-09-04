@@ -7,7 +7,7 @@ import { useLiveReload } from '../live';
 import { AsyncView, Chip, SectionHeading, Toggle, type Tone } from '../ui';
 
 const OUTCOME: Record<Conversation['outcome'], Tone> = {
-  confermato: 'good', trasferita: 'warn', 'in corso': 'live', chiusa: 'neutral'
+  confermato: 'good', trasferita: 'warn', 'in corso': 'live', chiusa: 'neutral', interrotta: 'bad'
 };
 const SPEAKER: Partial<Record<ConversationTurn['role'], string>> = { customer: 'Cliente', agent: 'Pizzeria' };
 
@@ -73,7 +73,7 @@ export function ConversationsPanel() {
           {(calls) => <>{calls.map((call, index) => <Call key={call.callId} call={call} defaultOpen={index === 0} />)}</>}
         </AsyncView>
       </div>
-      <p className="note">Ricostruite dagli eventi già registrati · numeri mascherati · conservate al massimo 24 ore</p>
+      <p className="note">“In corso” richiede attività negli ultimi 10 minuti · numeri mascherati · conservate al massimo 24 ore</p>
     </>
   );
 }

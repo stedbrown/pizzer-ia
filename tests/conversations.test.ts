@@ -3,6 +3,7 @@ import { buildConversations } from '../src/conversations.js';
 import type { LiveLogEvent, LogLevel, LogSource } from '../src/types.js';
 
 const missing = (): never => { throw new Error('nessuna conversazione ricostruita'); };
+const NOW = new Date(Date.UTC(2026, 8, 4, 10, 35));
 let sequence = 0;
 const event = (source: LogSource, message: string, callId?: string, level: LogLevel = 'INFO'): LiveLogEvent => ({
   id: String(++sequence), restaurantId: 'restaurant-demo', source, level, category: 'OPENAI', message, callId,
@@ -46,7 +47,7 @@ describe('Conversation log', () => {
       event('USER', '"mi passa una persona"', 'call-2', 'DEBUG'),
       event('TOOL', 'transfer_to_human transferred', 'call-2'),
       event('USER', '"buonasera"', 'call-3', 'DEBUG')
-    ]);
+    ], NOW);
     expect(conversations.map((conversation) => [conversation.callId, conversation.outcome])).toEqual([
       ['call-3', 'in corso'], ['call-2', 'trasferita'], ['call-1', 'confermato']
     ]);
@@ -56,8 +57,16 @@ describe('Conversation log', () => {
     const [conversation = missing()] = buildConversations([
       event('USER', '"mi passa una persona"', 'call-1', 'DEBUG'),
       event('TOOL', 'transfer_to_human failed: OpenAI refer failed (500)', 'call-1', 'ERROR')
-    ]);
+    ], NOW);
     expect(conversation.outcome).toBe('in corso');
+  });
+
+  it('does not leave a call in progress forever when its final event is missing', () => {
+    const [conversation = missing()] = buildConversations([
+      event('USER', '"pronto"', 'call-stale', 'DEBUG'),
+      event('CALL', 'Realtime established', 'call-stale')
+    ], new Date(Date.UTC(2026, 8, 4, 10, 45)));
+    expect(conversation.outcome).toBe('interrotta');
   });
 
   it('ignores events that belong to no call', () => {
