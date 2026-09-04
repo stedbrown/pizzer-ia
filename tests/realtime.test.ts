@@ -18,8 +18,26 @@ describe('Realtime voice agent', () => {
     expect(realtimeTools.map((tool) => tool.name)).toEqual([
       'get_menu', 'search_menu', 'start_order', 'add_item', 'remove_item', 'update_item',
       'set_customer_name', 'set_fulfillment', 'set_delivery_address', 'calculate_total',
-      'get_order_summary', 'confirm_order', 'transfer_to_human', 'end_call'
+      'get_order_summary', 'confirm_order', 'transfer_to_human', 'request_callback', 'end_call'
     ]);
+  });
+
+  it('offers a callback instead of a silent transfer when nobody can take the call', () => {
+    const withTransfer = centralistInstructions('Pizzeria Test', undefined, { humanTransferAvailable: true });
+    expect(withTransfer).toContain('usa transfer_to_human e passa la chiamata');
+    expect(withTransfer).not.toContain('request_callback');
+    // Senza destinazione configurata l'agente non deve promettere un passaggio che non avverrà.
+    const withoutTransfer = centralistInstructions('Pizzeria Test');
+    expect(withoutTransfer).toContain('non puoi passare nessuno');
+    expect(withoutTransfer).toContain('request_callback');
+  });
+
+  it('carries today\'s hours and waiting times into the prompt', () => {
+    const prompt = centralistInstructions('Pizzeria Test', undefined, { briefing: 'Sono le 18:30. Adesso siete aperti e si chiude alle 22:30.' });
+    expect(prompt).toContain('OGGI');
+    expect(prompt).toContain('si chiude alle 22:30');
+    expect(prompt).toContain('I tempi di attesa e gli orari te li ho scritti sopra');
+    expect(prompt).toContain('readyTime');
   });
 
   it('tells the agent to greet before hanging up', () => {
@@ -49,7 +67,6 @@ describe('Realtime voice agent', () => {
     expect(prompt).toContain('Non inventare prodotti');                                   // C
     expect(prompt).toContain('fai una domanda utile o proponi due cose');                 // D
     expect(prompt).toContain('Se ti interrompe, smetti di parlare e ascolta');            // E
-    expect(prompt).toContain('usa transfer_to_human');                                    // G e H
     expect(prompt).toContain('non è disponibile: chiedi un recapito solo se serve davvero');
     expect(prompt).not.toMatch(/Cliente: ".*" → Tu:/);
     expect(prompt.split('\n').length).toBeLessThan(45);   // guardia anti-bloat: era 70 righe e le ignorava
@@ -72,7 +89,6 @@ describe('Realtime voice agent', () => {
     const prompt = centralistInstructions('Pizzeria Test', undefined, { greeting: 'Pizzeria, buonasera! Cosa le preparo?', largeOrderThreshold: 12 });
     expect(prompt).toContain('Pizzeria, buonasera! Cosa le preparo?');
     expect(prompt).toContain('arriva a 12 pezzi');                                        // G: ordine assurdo
-    expect(prompt).toContain('usa transfer_to_human');
   });
 
   it('defaults to the full realtime model and keeps mini selectable', () => {

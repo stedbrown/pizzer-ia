@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import type { Store } from './store.js';
 import { OrderEngine } from './order-engine.js';
+import { orderConfirmationText, sendSms, smsConfigured } from './notify.js';
 import type { CallUsage, NewLiveLogEvent } from './types.js';
 
 type LogInput = Omit<NewLiveLogEvent, 'category'> & { category?: NewLiveLogEvent['category'] };
@@ -24,7 +25,8 @@ export const realtimeTools = [
   tool('get_order_summary', 'Riepilogo ufficiale con totale; abilita la conferma successiva. Usalo una sola volta, subito prima della conferma finale.'),
   tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente, pronunciato dopo il riepilogo.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
   tool('transfer_to_human', 'Passa la chiamata a una persona: se il cliente lo chiede, per allergie o informazioni non verificabili, oppure per ordini anomali.'),
-  tool('end_call', 'Chiude la telefonata. Usalo solo dopo aver salutato e solo a ordine confermato o chiamata passata a una persona.')
+  tool('request_callback', 'Registra la richiesta di essere richiamati dalla pizzeria. Usalo quando non è possibile passare una persona subito.', { phone: { type: 'string' }, reason: { type: 'string' } }, ['reason']),
+  tool('end_call', 'Chiude la telefonata. Usalo solo dopo aver salutato e solo a ordine confermato, richiamo registrato o chiamata passata a una persona.')
 ];
 
 export const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1';
@@ -35,17 +37,26 @@ const defaultLargeOrderThreshold = 20;
 export interface VoiceAgentOptions {
   greeting?: string;
   largeOrderThreshold?: number;
+  /** Orari, stato aperto/chiuso e tempi di attesa, calcolati dal backend all'inizio della chiamata. */
+  briefing?: string;
+  humanTransferAvailable?: boolean;
 }
 
 export function centralistInstructions(restaurantName: string, callerPhone?: string, options: VoiceAgentOptions = {}) {
   const greeting = options.greeting?.trim() || defaultGreeting;
   const largeOrderThreshold = normalizeLargeOrderThreshold(options.largeOrderThreshold);
+  const briefing = options.briefing?.trim();
+  const transfer = options.humanTransferAvailable
+    ? 'usa transfer_to_human e passa la chiamata'
+    : 'in questo momento non puoi passare nessuno: dillo con semplicità, offri di farlo richiamare, chiedi il numero se non ce l\'hai e registra la richiesta con request_callback';
+  const escalate = options.humanTransferAvailable ? 'usa transfer_to_human' : 'offri di farlo richiamare e usa request_callback';
   return `Sei l'addetto telefonico di ${restaurantName}, una pizzeria vera. Prendi ordini al telefono, in italiano.
 
 Parli come una persona al telefono: frasi corte, tono cordiale, UNA domanda alla volta, riscontri brevi e variati. Niente monologhi, niente elenchi, niente formule da call center, e non dire "perfetto" a ogni frase. Non sei un assistente virtuale: non nominare mai strumenti, funzioni, database, sistemi o modelli AI.
 Dai sempre del LEI, dall'inizio alla fine. Mai passare al tu.
 
 Apri la chiamata soltanto con: "${greeting}". Poi non salutare più e non ripresentarti.
+${briefing ? `\nOGGI\n${briefing}\n` : ''}
 
 MAI ANNUNCIARE QUELLO CHE STAI PER FARE
 Non dire mai "la segno", "preparo il riepilogo", "lo segno come confermato", "adesso controllo", "procedo", "un attimo che sistemo". Non descrivere il tuo lavoro: fallo e basta, poi parla una volta sola col risultato. Il riepilogo lo dici direttamente, non lo annunci.
@@ -68,17 +79,17 @@ MENU
 MENTRE PARLI
 - Usa gli strumenti in silenzio, senza dire niente prima. Per più prodotti falli tutti nello stesso turno e poi dai UNA sola risposta breve.
 - Dopo aver segnato qualcosa non ripetere l'ordine: basta un riscontro di due parole e la domanda successiva, se ne serve una.
-- Se qualcosa non risponde, niente termini tecnici: "Un attimo, questa cosa non riesco a verificarla." Se il problema resta, usa transfer_to_human.
+- Se qualcosa non risponde, niente termini tecnici: "Un attimo, questa cosa non riesco a verificarla." Se il problema resta, ${escalate}.
 - Non ripetere mai saluto, nome, totale, domande già fatte o cose appena dette. Non riepilogare dopo ogni modifica.
 
 QUANDO NON SAI
-Tempi di attesa, allergeni, promozioni, consegne, ingredienti non confermati: non inventare niente. Di' che preferisci non dare un'informazione sbagliata e proponi di passare la pizzeria. Per le allergie usa sempre transfer_to_human. Non chiedere dati di carte di credito.
+I tempi di attesa e gli orari te li ho scritti sopra: quelli puoi dirli. Tutto il resto che non hai — promozioni, ingredienti non confermati, zone di consegna — non inventarlo: di' che preferisci non dare un'informazione sbagliata. Sugli allergeni puoi riferire quello che risulta a menu, ma se il cliente parla di un'allergia non dare garanzie: serve la pizzeria. Non chiedere dati di carte di credito.
 
 PASSARE A UNA PERSONA
-Se il cliente lo chiede, o se l'ordine è anomalo o arriva a ${largeOrderThreshold} pezzi, non confermarlo: dillo in una frase e usa transfer_to_human.
+Se il cliente lo chiede, o se l'ordine è anomalo o arriva a ${largeOrderThreshold} pezzi, non confermarlo: ${transfer}.
 
 CHIUSURA
-Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato chiudi in una frase, senza promettere tempi che non conosci.
+Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato di' l'ora indicata da confirm_order in readyTime — quella è la stima della pizzeria, non inventarne altre — e chiudi in una frase.
 Poi saluta normalmente e chiudi la telefonata con end_call: prima il saluto, poi end_call, mai mentre il cliente sta ancora parlando. Se dopo il saluto dice altro, riprendi la conversazione e chiuderai più tardi.`;
 }
 
@@ -103,7 +114,7 @@ export function supportsParallelToolCalls(model: string) {
   return /^gpt-realtime-2/i.test(model);
 }
 
-export function buildRealtimeSession(args: { restaurantName: string; callerPhone?: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; testMode?: boolean } & TurnDetectionOptions) {
+export function buildRealtimeSession(args: { restaurantName: string; callerPhone?: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; briefing?: string; humanTransferAvailable?: boolean; testMode?: boolean } & TurnDetectionOptions) {
   return {
     type: 'realtime', model: args.model, instructions: centralistInstructions(args.restaurantName, args.callerPhone, args),
     output_modalities: ['audio'], max_output_tokens: 700, parallel_tool_calls: supportsParallelToolCalls(args.model),
@@ -235,7 +246,7 @@ export class CallCloser {
   }
 }
 
-export async function acceptRealtimeCall(args: { callId: string; restaurantName: string; callerPhone?: string; apiKey: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; testMode?: boolean } & TurnDetectionOptions) {
+export async function acceptRealtimeCall(args: { callId: string; restaurantName: string; callerPhone?: string; apiKey: string; model: string; voice: string; greeting?: string; largeOrderThreshold?: number; briefing?: string; humanTransferAvailable?: boolean; testMode?: boolean } & TurnDetectionOptions) {
   const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(args.callId)}/accept`, {
     method: 'POST', headers: { Authorization: `Bearer ${args.apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(buildRealtimeSession(args))
@@ -243,7 +254,29 @@ export async function acceptRealtimeCall(args: { callId: string; restaurantName:
   if (!response.ok) throw new Error(`OpenAI accept failed (${response.status})`);
 }
 
-export function connectSideband(args: { callId: string; restaurantId: string; callerPhone?: string; apiKey: string; store: Store; log?: (event: LogInput) => Promise<unknown> }) {
+/**
+ * La conferma scritta parte in sottofondo: se il provider SMS non è configurato o non risponde,
+ * la telefonata non ne risente e la cosa resta scritta nei log.
+ */
+async function notifyCustomer(
+  args: { restaurantId: string; restaurantName?: string; callerPhone?: string; store: Store },
+  result: any,
+  writeLog: (event: LogInput) => void
+) {
+  if (!smsConfigured() || !args.callerPhone || !result?.orderId) return;
+  try {
+    const order = (await args.store.listOrders(args.restaurantId)).find((candidate) => candidate.id === result.orderId);
+    if (!order) return;
+    const text = orderConfirmationText(order, args.restaurantName ?? 'Pizzeria', result.readyTime);
+    if (!(await sendSms(args.callerPhone, text))) return;
+    await args.store.markOrderNotified(order.id);
+    writeLog({ source: 'BACKEND', level: 'INFO', message: `Conferma SMS inviata per ${order.orderNumber}` });
+  } catch (error) {
+    writeLog({ source: 'BACKEND', level: 'WARN', message: `Conferma SMS non inviata: ${error instanceof Error ? error.message : 'errore provider'}` });
+  }
+}
+
+export function connectSideband(args: { callId: string; restaurantId: string; restaurantName?: string; callerPhone?: string; apiKey: string; store: Store; log?: (event: LogInput) => Promise<unknown> }) {
   const ws = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(args.callId)}`, { headers: { Authorization: `Bearer ${args.apiKey}` } });
   const writeLog = (event: LogInput) => { void args.log?.({ ...event, callId: event.callId ?? args.callId }).catch(() => undefined); };
   const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone, args.log);
@@ -321,13 +354,23 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
         closing = closer.request();
         output = { ok: closing };
         writeLog({ source: 'TOOL', level: 'INFO', message: closing ? 'end_call accettato' : 'end_call rifiutato: ordine non concluso' });
+      } else if (event.name === 'request_callback') {
+        const phone = typeof parsed?.phone === 'string' && parsed.phone.trim() ? parsed.phone.trim() : args.callerPhone;
+        const reason = typeof parsed?.reason === 'string' && parsed.reason.trim() ? parsed.reason.trim().slice(0, 200) : 'richiesta dal cliente';
+        await args.store.addCallback(args.restaurantId, { callId: args.callId, phone, reason });
+        closer.allow();
+        output = { ok: true, phoneOnFile: Boolean(phone) };
+        writeLog({ source: 'TOOL', level: 'INFO', message: `request_callback registrato: ${reason}` });
       } else {
         const result = await engine.execute(event.name, parsed);
         output = toolOutputForModel(event.name, result);
         writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, result) });
         const state = orderStateMessage(result);
         if (state) writeLog({ source: 'ORDER', level: 'DEBUG', message: state });
-        if (event.name === 'confirm_order') closer.allow();
+        if (event.name === 'confirm_order') {
+          closer.allow();
+          void notifyCustomer(args, result, writeLog);
+        }
         if (event.name === 'transfer_to_human') {
           closer.allow();
           if (process.env.HUMAN_TRANSFER_URI) await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);

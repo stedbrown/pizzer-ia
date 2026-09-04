@@ -66,7 +66,9 @@ npm run check
 | `AUTO_HANGUP_SECONDS` | no | Pausa fra il saluto e la chiusura automatica; default `3`, `0` disattiva |
 | `HEARTBEAT_SECRET` | per monitoraggio | Token dedicato Asterisk → backend |
 | `RESTAURANT_DID` | no | DID documentale/configurativo |
-| `HUMAN_TRANSFER_URI` | no | Destinazione SIP/tel per trasferimento umano |
+| `HUMAN_TRANSFER_URI` | no | Destinazione SIP/tel per trasferimento umano. Senza, l'agente offre di far richiamare invece di promettere un passaggio che non avverrebbe |
+| `SMS_WEBHOOK_URL` | no | Endpoint che inoltra la conferma al cliente; riceve `POST {to, text}`. Senza, nessun SMS viene inviato |
+| `SMS_WEBHOOK_TOKEN` | no | Bearer token per quell'endpoint |
 
 Usare `.env.example` soltanto come schema. Non inserire secret nel repository o nei log.
 

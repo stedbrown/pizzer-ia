@@ -6,6 +6,8 @@ export interface Modifier {
   name: string;
   priceCents: number;
   active: boolean;
+  /** 'remove' è una rinuncia ("senza mozzarella"), 'add' è un supplemento a pagamento. */
+  kind: 'add' | 'remove';
 }
 
 export interface MenuItem {
@@ -13,9 +15,50 @@ export interface MenuItem {
   restaurantId: string;
   name: string;
   description?: string;
+  category?: string;
+  allergens: string[];
   priceCents: number;
   active: boolean;
+  /** Finito per oggi: si azzera da solo il giorno dopo. */
+  soldOutUntil?: string;
   modifiers: Modifier[];
+}
+
+export interface OpeningSlot {
+  weekday: number;
+  opens: string;
+  closes: string;
+}
+
+export interface ServiceSettings {
+  timezone: string;
+  prepMinutes: number;
+  deliveryExtraMinutes: number;
+  busyExtraMinutes: number;
+  busyMode: boolean;
+  acceptsDelivery: boolean;
+  hours: OpeningSlot[];
+}
+
+export interface ServiceStatus {
+  open: boolean;
+  busyMode: boolean;
+  acceptsDelivery: boolean;
+  localTime: string;
+  todayHours: OpeningSlot[];
+  closesAt?: string;
+  opensAt?: string;
+  pickupMinutes: number;
+  deliveryMinutes?: number;
+}
+
+export interface Callback {
+  id: string;
+  callId?: string;
+  phone?: string;
+  reason: string;
+  createdAt: string;
+  handledAt?: string;
 }
 
 export interface DraftLine {
@@ -48,6 +91,8 @@ export interface OrderView {
   totalCents: number;
   status: OrderStatus;
   createdAt: string;
+  readyAt?: string;
+  notifiedAt?: string;
   items: Array<{ name: string; quantity: number; unitPriceCents: number; modifiers: Modifier[]; lineTotalCents: number }>;
 }
 

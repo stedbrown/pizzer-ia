@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import type { CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, Modifier, MonthlyUsage, NewLiveLogEvent, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
-import type { Store } from './store.js';
+import type { Callback, CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, Modifier, MonthlyUsage, NewLiveLogEvent, OrderStatus, OrderView, ServiceSettings, TelephonyHeartbeat, TelephonyStatus } from './types.js';
+import type { MenuItemPatch, ServiceSettingsPatch, Store } from './store.js';
 import { menuSearchTerms } from './menu-search.js';
 
 export class PostgresStore implements Store {
@@ -18,24 +18,90 @@ export class PostgresStore implements Store {
   async getMenu(restaurantId: string, query?: string, includeInactive = false) {
     const values: unknown[] = [restaurantId];
     let where = 'mi.restaurant_id = $1';
-    if (!includeInactive) where += ' AND mi.active';
+    // "Finito per oggi" vale quanto un prodotto disattivato, ma si azzera da solo domani.
+    if (!includeInactive) where += ' AND mi.active AND (mi.sold_out_until IS NULL OR mi.sold_out_until < CURRENT_DATE)';
     const terms = query ? menuSearchTerms(query) : [];
     if (terms.length) {
       values.push(terms.map((term) => `%${term}%`));
-      where += ` AND (mi.name ILIKE ANY($${values.length}::text[]) OR COALESCE(mi.description,'') ILIKE ANY($${values.length}::text[]))`;
+      where += ` AND (mi.name ILIKE ANY($${values.length}::text[]) OR COALESCE(mi.description,'') ILIKE ANY($${values.length}::text[])`
+        + ` OR COALESCE(mi.category,'') ILIKE ANY($${values.length}::text[]))`;
     }
     const result = await this.pool.query(`
-      SELECT mi.id, mi.restaurant_id, mi.name, mi.description, mi.price_cents, mi.active,
-        COALESCE(jsonb_agg(jsonb_build_object('id', mm.id, 'name', mm.name, 'priceCents', mm.price_cents, 'active', mm.active)
-          ORDER BY mm.name) FILTER (WHERE mm.id IS NOT NULL), '[]'::jsonb) modifiers
-      FROM menu_items mi LEFT JOIN menu_modifiers mm ON mm.menu_item_id = mi.id
-      WHERE ${where} GROUP BY mi.id ORDER BY mi.name`, values);
+      SELECT mi.id, mi.restaurant_id, mi.name, mi.description, mi.category, mi.allergens, mi.price_cents, mi.active, mi.sold_out_until,
+        COALESCE(jsonb_agg(jsonb_build_object('id', mm.id, 'name', mm.name, 'priceCents', mm.price_cents, 'active', mm.active, 'kind', mm.kind)
+          ORDER BY mm.kind DESC, mm.name) FILTER (WHERE mm.id IS NOT NULL AND mm.active), '[]'::jsonb) modifiers
+      FROM menu_items mi
+      LEFT JOIN menu_modifiers mm
+        ON mm.menu_item_id = mi.id
+        OR (mm.menu_item_id IS NULL AND mm.restaurant_id = mi.restaurant_id)
+      WHERE ${where} GROUP BY mi.id ORDER BY mi.category NULLS LAST, mi.name`, values);
     return result.rows.map(mapMenuItem);
   }
-  async updateMenuItem(restaurantId: string, itemId: string, patch: { name?: string; priceCents?: number; active?: boolean }) {
+  async getServiceSettings(restaurantId: string) {
+    const settings = await this.pool.query(`SELECT timezone, prep_minutes, delivery_extra_minutes, busy_extra_minutes, busy_mode, accepts_delivery
+      FROM restaurants WHERE id=$1`, [restaurantId]);
+    const hours = await this.pool.query('SELECT weekday, opens::text, closes::text FROM restaurant_hours WHERE restaurant_id=$1 ORDER BY weekday, opens', [restaurantId]);
+    const row = settings.rows[0] ?? {};
+    return {
+      timezone: row.timezone ?? 'Europe/Zurich',
+      prepMinutes: row.prep_minutes ?? 20,
+      deliveryExtraMinutes: row.delivery_extra_minutes ?? 15,
+      busyExtraMinutes: row.busy_extra_minutes ?? 15,
+      busyMode: row.busy_mode ?? false,
+      acceptsDelivery: row.accepts_delivery ?? true,
+      hours: hours.rows.map((slot) => ({ weekday: slot.weekday, opens: String(slot.opens).slice(0, 5), closes: String(slot.closes).slice(0, 5) }))
+    } as ServiceSettings;
+  }
+  async updateServiceSettings(restaurantId: string, patch: ServiceSettingsPatch) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`UPDATE restaurants SET
+        timezone=COALESCE($2,timezone), prep_minutes=COALESCE($3,prep_minutes), delivery_extra_minutes=COALESCE($4,delivery_extra_minutes),
+        busy_extra_minutes=COALESCE($5,busy_extra_minutes), busy_mode=COALESCE($6,busy_mode), accepts_delivery=COALESCE($7,accepts_delivery)
+        WHERE id=$1`,
+        [restaurantId, patch.timezone ?? null, patch.prepMinutes ?? null, patch.deliveryExtraMinutes ?? null,
+          patch.busyExtraMinutes ?? null, patch.busyMode ?? null, patch.acceptsDelivery ?? null]);
+      if (patch.hours) {
+        await client.query('DELETE FROM restaurant_hours WHERE restaurant_id=$1', [restaurantId]);
+        for (const slot of patch.hours) {
+          await client.query('INSERT INTO restaurant_hours (id,restaurant_id,weekday,opens,closes) VALUES ($1,$2,$3,$4,$5)',
+            [randomUUID(), restaurantId, slot.weekday, slot.opens, slot.closes]);
+        }
+      }
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    return this.getServiceSettings(restaurantId);
+  }
+  async addCallback(restaurantId: string, input: { callId?: string; phone?: string; reason: string }) {
+    const result = await this.pool.query(`INSERT INTO callbacks (id,restaurant_id,call_id,phone,reason) VALUES ($1,$2,$3,$4,$5)
+      RETURNING id,call_id,phone,reason,created_at,handled_at`,
+      [randomUUID(), restaurantId, input.callId ?? null, input.phone ?? null, input.reason]);
+    return mapCallback(result.rows[0]);
+  }
+  async listCallbacks(restaurantId: string) {
+    const result = await this.pool.query(`SELECT id,call_id,phone,reason,created_at,handled_at FROM callbacks
+      WHERE restaurant_id=$1 AND created_at > now() - interval '7 days' ORDER BY handled_at NULLS FIRST, created_at DESC LIMIT 50`, [restaurantId]);
+    return result.rows.map(mapCallback);
+  }
+  async resolveCallback(restaurantId: string, id: string) {
+    const result = await this.pool.query('UPDATE callbacks SET handled_at=now() WHERE restaurant_id=$1 AND id=$2 AND handled_at IS NULL', [restaurantId, id]);
+    return Boolean(result.rowCount);
+  }
+  async markOrderNotified(orderId: string) {
+    await this.pool.query('UPDATE orders SET notified_at=now() WHERE id=$1', [orderId]);
+  }
+  async updateMenuItem(restaurantId: string, itemId: string, patch: MenuItemPatch) {
     const result = await this.pool.query(`UPDATE menu_items SET
-      name = COALESCE($3, name), price_cents = COALESCE($4, price_cents), active = COALESCE($5, active)
-      WHERE restaurant_id = $1 AND id = $2 RETURNING id`, [restaurantId, itemId, patch.name ?? null, patch.priceCents ?? null, patch.active ?? null]);
+      name = COALESCE($3, name), price_cents = COALESCE($4, price_cents), active = COALESCE($5, active),
+      category = CASE WHEN $6::boolean THEN $7 ELSE category END,
+      allergens = COALESCE($8::text[], allergens),
+      sold_out_until = CASE WHEN $9::boolean THEN $10::date ELSE sold_out_until END
+      WHERE restaurant_id = $1 AND id = $2 RETURNING id`,
+      [restaurantId, itemId, patch.name ?? null, patch.priceCents ?? null, patch.active ?? null,
+        patch.category !== undefined, patch.category ?? null,
+        patch.allergens ?? null,
+        patch.soldOutUntil !== undefined, patch.soldOutUntil ?? null]);
     if (!result.rowCount) return undefined;
     return (await this.getMenu(restaurantId, undefined, true)).find((x) => x.id === itemId);
   }
@@ -66,7 +132,7 @@ export class PostgresStore implements Store {
   async saveDraft(draft: DraftOrder) {
     await this.pool.query('UPDATE calls SET draft_state=$2::jsonb, updated_at=now() WHERE openai_call_id=$1', [draft.callId, JSON.stringify(draft)]);
   }
-  async createOrder(draft: DraftOrder, menu: MenuItem[], totalCents: number) {
+  async createOrder(draft: DraftOrder, menu: MenuItem[], totalCents: number, readyAt?: Date) {
     if (draft.confirmedOrderId) {
       const existing = await this.getOrder(draft.restaurantId, draft.confirmedOrderId);
       if (existing) return existing;
@@ -82,9 +148,9 @@ export class PostgresStore implements Store {
       const id = randomUUID();
       const orderNumber = `PZ-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${id.slice(0, 4).toUpperCase()}`;
       await client.query(`INSERT INTO orders
-        (id,order_number,restaurant_id,call_id,customer_name,customer_phone,fulfillment,delivery_address,total_cents,status)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'CONFIRMED')`,
-        [id, orderNumber, draft.restaurantId, draft.callId, draft.customerName, draft.callerPhone ?? null, draft.fulfillment, draft.deliveryAddress ?? null, totalCents]);
+        (id,order_number,restaurant_id,call_id,customer_name,customer_phone,fulfillment,delivery_address,total_cents,status,ready_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'CONFIRMED',$10)`,
+        [id, orderNumber, draft.restaurantId, draft.callId, draft.customerName, draft.callerPhone ?? null, draft.fulfillment, draft.deliveryAddress ?? null, totalCents, readyAt ?? null]);
       for (const line of draft.lines) {
         const item = menu.find((x) => x.id === line.itemId)!;
         const modifiers = line.modifierIds.map((modifierId) => item.modifiers.find((m) => m.id === modifierId)!);
@@ -171,7 +237,15 @@ export class PostgresStore implements Store {
 }
 
 function mapMenuItem(row: any): MenuItem {
-  return { id: row.id, restaurantId: row.restaurant_id, name: row.name, description: row.description ?? undefined, priceCents: row.price_cents, active: row.active, modifiers: row.modifiers as Modifier[] };
+  return { id: row.id, restaurantId: row.restaurant_id, name: row.name, description: row.description ?? undefined,
+    category: row.category ?? undefined, allergens: row.allergens ?? [], priceCents: row.price_cents, active: row.active,
+    soldOutUntil: row.sold_out_until ? new Date(row.sold_out_until).toISOString().slice(0, 10) : undefined,
+    modifiers: row.modifiers as Modifier[] };
+}
+
+function mapCallback(row: any): Callback {
+  return { id: row.id, callId: row.call_id ?? undefined, phone: row.phone ?? undefined, reason: row.reason,
+    createdAt: row.created_at.toISOString(), handledAt: row.handled_at ? row.handled_at.toISOString() : undefined };
 }
 
 function mapLogEvent(row: any): LiveLogEvent {
@@ -191,7 +265,9 @@ function groupOrders(rows: any[]): OrderView[] {
     if (!order) {
       order = { id: row.id, orderNumber: row.order_number, restaurantId: row.restaurant_id, customerName: row.customer_name,
         customerPhone: row.customer_phone ?? undefined, fulfillment: row.fulfillment, deliveryAddress: row.delivery_address ?? undefined,
-        totalCents: row.total_cents, status: row.status, createdAt: row.created_at.toISOString(), items: [] };
+        totalCents: row.total_cents, status: row.status, createdAt: row.created_at.toISOString(),
+        readyAt: row.ready_at ? row.ready_at.toISOString() : undefined,
+        notifiedAt: row.notified_at ? row.notified_at.toISOString() : undefined, items: [] };
       result.set(row.id, order);
     }
     if (row.line_id) order.items.push({ name: row.item_name, quantity: row.quantity, unitPriceCents: row.unit_price_cents, modifiers: row.modifiers, lineTotalCents: row.line_total_cents });

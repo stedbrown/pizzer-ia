@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { DraftOrder, MenuItem, NewLiveLogEvent } from './types.js';
 import type { Store } from './store.js';
+import { readyAt, serviceStatus } from './service-hours.js';
+
+export function formatLocalTime(date: Date, timezone: string) {
+  return new Intl.DateTimeFormat('it-CH', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+}
 
 export class OrderError extends Error {}
 
@@ -105,12 +110,17 @@ export class OrderEngine {
         if (draft.fulfillment === 'delivery' && !draft.deliveryAddress) throw new OrderError('Indirizzo di consegna mancante');
         const menu = await this.store.getMenu(this.restaurantId);
         const priced = calculateDraft(draft, menu);
-        const order = await this.store.createOrder(draft, menu, priced.totalCents);
+        // L'ora di pronto la decide la pizzeria dalle sue impostazioni, non il modello.
+        const settings = await this.store.getServiceSettings(this.restaurantId);
+        const status = serviceStatus(settings);
+        const ready = readyAt(status, draft.fulfillment);
+        const order = await this.store.createOrder(draft, menu, priced.totalCents, ready);
         this.writeLog({ source: 'DB', level: 'INFO', message: `Order created: ${order.orderNumber}` });
         draft.confirmedOrderId = order.id;
         await this.store.saveDraft(draft);
         this.writeLog({ source: 'ORDER', level: 'INFO', message: `Order confirmed: ${order.orderNumber}` });
-        return { orderNumber: order.orderNumber, totalCents: order.totalCents, status: order.status };
+        return { orderId: order.id, orderNumber: order.orderNumber, totalCents: order.totalCents, status: order.status,
+          readyTime: formatLocalTime(ready, settings.timezone) };
       }
       case 'transfer_to_human': return { available: Boolean(process.env.HUMAN_TRANSFER_URI), message: process.env.HUMAN_TRANSFER_URI ? 'Trasferimento in corso' : 'Trasferimento umano non configurato' };
       default: throw new OrderError(`Tool sconosciuto: ${name}`);

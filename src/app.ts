@@ -11,6 +11,8 @@ import { verifyOpenAIWebhook } from './webhook-signature.js';
 import { acceptRealtimeCall, buildTurnDetection, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE } from './realtime.js';
 import { publicLogEvent, safeLogEvent } from './live-logs.js';
 import { buildConversations } from './conversations.js';
+import { serviceBriefing, serviceStatus } from './service-hours.js';
+import { smsConfigured } from './notify.js';
 
 export interface AppOptions {
   store: Store;
@@ -83,9 +85,43 @@ export function buildApp(options: AppOptions) {
   app.get('/api/menu', { preHandler: auth }, async () => options.store.getMenu(DEMO_RESTAURANT_ID, undefined, true));
   app.patch('/api/menu/:id', { preHandler: auth }, async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
-    const body = z.object({ name: z.string().trim().min(1).max(120).optional(), priceCents: z.number().int().min(0).max(100000).optional(), active: z.boolean().optional() }).parse(jsonBody(request));
+    const body = z.object({
+      name: z.string().trim().min(1).max(120).optional(),
+      priceCents: z.number().int().min(0).max(100000).optional(),
+      active: z.boolean().optional(),
+      category: z.string().trim().max(60).nullable().optional(),
+      allergens: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+      soldOutUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional()
+    }).parse(jsonBody(request));
     const item = await options.store.updateMenuItem(DEMO_RESTAURANT_ID, params.id, body);
     return item ?? reply.code(404).send({ error: 'Prodotto non trovato' });
+  });
+  app.get('/api/service', { preHandler: auth }, async () => {
+    const settings = await options.store.getServiceSettings(DEMO_RESTAURANT_ID);
+    return { settings, status: serviceStatus(settings), smsConfigured: smsConfigured(), humanTransfer: Boolean(process.env.HUMAN_TRANSFER_URI) };
+  });
+  app.patch('/api/service', { preHandler: auth }, async (request) => {
+    const body = z.object({
+      timezone: z.string().trim().min(3).max(60).optional(),
+      prepMinutes: z.number().int().min(1).max(180).optional(),
+      deliveryExtraMinutes: z.number().int().min(0).max(120).optional(),
+      busyExtraMinutes: z.number().int().min(0).max(120).optional(),
+      busyMode: z.boolean().optional(),
+      acceptsDelivery: z.boolean().optional(),
+      hours: z.array(z.object({
+        weekday: z.number().int().min(0).max(6),
+        opens: z.string().regex(/^\d{2}:\d{2}$/),
+        closes: z.string().regex(/^\d{2}:\d{2}$/)
+      })).max(28).optional()
+    }).parse(jsonBody(request));
+    const settings = await options.store.updateServiceSettings(DEMO_RESTAURANT_ID, body);
+    await emitLog({ source: 'BACKEND', level: 'INFO', message: 'Impostazioni di servizio aggiornate' });
+    return { settings, status: serviceStatus(settings) };
+  });
+  app.get('/api/callbacks', { preHandler: auth }, async () => options.store.listCallbacks(DEMO_RESTAURANT_ID));
+  app.post('/api/callbacks/:id/resolve', { preHandler: auth }, async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    return (await options.store.resolveCallback(DEMO_RESTAURANT_ID, params.id)) ? { ok: true } : reply.code(404).send({ error: 'Richiamo non trovato' });
   });
   app.post('/api/telephony/heartbeat', { preHandler: heartbeatAuth }, async (request) => {
     const body = z.object({
@@ -205,14 +241,19 @@ export function buildApp(options: AppOptions) {
       await options.store.saveCall({ callId, from, to, restaurantId: restaurant.id });
       await emitLog({ source: 'DB', level: 'INFO', message: 'Call record created', callId });
       const testMode = Boolean(await options.store.getTestModeUntil(restaurant.id));
+      // Orari e tempi entrano nel prompt all'accettazione: nessun round trip in più durante la chiamata.
+      const status = serviceStatus(await options.store.getServiceSettings(restaurant.id));
+      await emitLog({ source: 'BACKEND', level: 'INFO', message: status.open ? `Pizzeria aperta, ritiro ~${status.pickupMinutes} min` : 'Pizzeria chiusa: nessun ordine accettato', callId });
       await acceptRealtimeCall({
         callId, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey,
         model: options.realtimeModel ?? DEFAULT_REALTIME_MODEL, voice: options.voice ?? DEFAULT_VOICE,
         greeting: options.greeting, largeOrderThreshold: options.largeOrderThreshold,
+        briefing: serviceBriefing(status, restaurant.name),
+        humanTransferAvailable: Boolean(process.env.HUMAN_TRANSFER_URI),
         turnDetection: options.turnDetection, vadEagerness: options.vadEagerness, testMode
       });
       await emitLog({ source: 'OPENAI', level: 'INFO', message: 'Realtime call accepted', callId });
-      connectSideband({ callId, restaurantId: restaurant.id, callerPhone: from, apiKey: options.apiKey, store: options.store, log: emitLog });
+      connectSideband({ callId, restaurantId: restaurant.id, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey, store: options.store, log: emitLog });
       return { ok: true };
     } catch (error) {
       await options.store.releaseWebhook(eventId);
