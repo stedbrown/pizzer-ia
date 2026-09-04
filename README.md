@@ -63,6 +63,7 @@ npm run check
 | `OPENAI_VAD_EAGERNESS` | no | Solo con `semantic_vad`: `low`, `medium` (default), `high` |
 | `OPENAI_GREETING` | no | Saluto iniziale breve, default `Pizzeria, buongiorno! Mi dica.` |
 | `LARGE_ORDER_THRESHOLD` | no | Da questa quantità l'AI propone il passaggio umano; default e massimo operativo `20` |
+| `AUTO_HANGUP_SECONDS` | no | Pausa fra il saluto e la chiusura automatica; default `3`, `0` disattiva |
 | `HEARTBEAT_SECRET` | per monitoraggio | Token dedicato Asterisk → backend |
 | `RESTAURANT_DID` | no | DID documentale/configurativo |
 | `HUMAN_TRANSFER_URI` | no | Destinazione SIP/tel per trasferimento umano |
@@ -153,6 +154,10 @@ Checklist manuale per una chiamata in Modalità test:
 - Chiamata non arriva: seguire in ordine Hello World, Echo e poi OpenAI; verificare registrazione sipcall, Project ID, TLS/5061, codec e RTP.
 - Chiamata arriva ma non parla: controllare API key, disponibilità del modello e log dell'accept endpoint.
 - Tool fallisce: verificare che menu/modificatori siano attivi e che gli ID provengano dai risultati del backend.
+
+## Chiusura della chiamata
+
+A ordine confermato o chiamata trasferita l'agente saluta e chiama `end_call`. La chiusura non parte subito: il backend attende che l'agente abbia finito di parlare, aspetta `AUTO_HANGUP_SECONDS` e solo allora chiama `POST /v1/realtime/calls/{id}/hangup`. Se il cliente riprende a parlare in quella finestra la chiusura viene annullata e serve un nuovo `end_call`. Prima della conferma `end_call` viene rifiutato dal backend, così una chiamata in corso non può essere chiusa per errore.
 
 ## Conversazioni
 

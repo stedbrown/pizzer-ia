@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildRealtimeSession, buildTurnDetection, centralistInstructions, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE,
+  buildRealtimeSession, buildTurnDetection, CallCloser, centralistInstructions, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE,
   orderStateMessage, realtimeTools, ResponseScheduler, supportsParallelToolCalls, toolOutputForModel
 } from '../src/realtime.js';
 
@@ -18,8 +18,14 @@ describe('Realtime voice agent', () => {
     expect(realtimeTools.map((tool) => tool.name)).toEqual([
       'get_menu', 'search_menu', 'start_order', 'add_item', 'remove_item', 'update_item',
       'set_customer_name', 'set_fulfillment', 'set_delivery_address', 'calculate_total',
-      'get_order_summary', 'confirm_order', 'transfer_to_human'
+      'get_order_summary', 'confirm_order', 'transfer_to_human', 'end_call'
     ]);
+  });
+
+  it('tells the agent to greet before hanging up', () => {
+    const prompt = centralistInstructions('Pizzeria Test');
+    expect(prompt).toContain('prima il saluto, poi end_call');
+    expect(prompt).toContain('mai mentre il cliente sta ancora parlando');
   });
 
   it('uses a natural short greeting and strong conversational rules', () => {
@@ -46,7 +52,7 @@ describe('Realtime voice agent', () => {
     expect(prompt).toContain('usa transfer_to_human');                                    // G e H
     expect(prompt).toContain('non è disponibile: chiedi un recapito solo se serve davvero');
     expect(prompt).not.toMatch(/Cliente: ".*" → Tu:/);
-    expect(prompt.split('\n').length).toBeLessThan(40);
+    expect(prompt.split('\n').length).toBeLessThan(45);   // guardia anti-bloat: era 70 righe e le ignorava
   });
 
   it('never proposes add-ons on its own', () => {
@@ -163,7 +169,77 @@ describe('Tool output shaping', () => {
   });
 });
 
+describe('CallCloser', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const closerWith = (graceMs = 3000) => { const hangup = vi.fn(); return { hangup, closer: new CallCloser(hangup, graceMs) }; };
+
+  it('never hangs up before the order is concluded', () => {
+    const { hangup, closer } = closerWith();
+    expect(closer.request()).toBe(false);
+    closer.responseFinished();
+    vi.advanceTimersByTime(10_000);
+    expect(hangup).not.toHaveBeenCalled();
+  });
+
+  it('waits for the goodbye to finish, then closes', () => {
+    const { hangup, closer } = closerWith();
+    closer.allow();
+    expect(closer.request()).toBe(true);
+    vi.advanceTimersByTime(10_000);
+    expect(hangup).not.toHaveBeenCalled();   // sta ancora salutando
+    closer.responseFinished();
+    vi.advanceTimersByTime(2_999);
+    expect(hangup).not.toHaveBeenCalled();   // pausa di cortesia
+    vi.advanceTimersByTime(1);
+    expect(hangup).toHaveBeenCalledTimes(1);
+  });
+
+  it('stays on the line if the customer speaks again', () => {
+    const { hangup, closer } = closerWith();
+    closer.allow();
+    closer.request();
+    closer.responseFinished();
+    vi.advanceTimersByTime(1_000);
+    closer.userSpeechStarted();
+    vi.advanceTimersByTime(30_000);
+    expect(hangup).not.toHaveBeenCalled();
+    closer.responseFinished();
+    vi.advanceTimersByTime(30_000);
+    expect(hangup).not.toHaveBeenCalled();   // serve un nuovo end_call
+  });
+
+  it('can be switched off entirely', () => {
+    const { hangup, closer } = closerWith(0);
+    closer.allow();
+    expect(closer.request()).toBe(false);
+    closer.responseFinished();
+    vi.advanceTimersByTime(30_000);
+    expect(hangup).not.toHaveBeenCalled();
+  });
+
+  it('drops a pending close when the call is torn down', () => {
+    const { hangup, closer } = closerWith();
+    closer.allow();
+    closer.request();
+    closer.responseFinished();
+    closer.cancel();
+    vi.advanceTimersByTime(30_000);
+    expect(hangup).not.toHaveBeenCalled();
+  });
+});
+
 describe('ResponseScheduler', () => {
+  it('does not make the agent speak again after the closing tool', () => {
+    const send = vi.fn();
+    const scheduler = new ResponseScheduler(send);
+    scheduler.responseCreated();
+    scheduler.toolStarted();
+    scheduler.toolFinished(false);
+    scheduler.responseFinished();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('speaks once after several tools in the same turn', () => {
     const send = vi.fn();
     const scheduler = new ResponseScheduler(send);

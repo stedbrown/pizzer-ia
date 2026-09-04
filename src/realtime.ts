@@ -23,7 +23,8 @@ export const realtimeTools = [
   tool('calculate_total', 'Totale ufficiale calcolato dal backend. Chiamalo quando il cliente chiede quanto viene.'),
   tool('get_order_summary', 'Riepilogo ufficiale con totale; abilita la conferma successiva. Usalo una sola volta, subito prima della conferma finale.'),
   tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente, pronunciato dopo il riepilogo.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
-  tool('transfer_to_human', 'Passa la chiamata a una persona: se il cliente lo chiede, per allergie o informazioni non verificabili, oppure per ordini anomali.')
+  tool('transfer_to_human', 'Passa la chiamata a una persona: se il cliente lo chiede, per allergie o informazioni non verificabili, oppure per ordini anomali.'),
+  tool('end_call', 'Chiude la telefonata. Usalo solo dopo aver salutato e solo a ordine confermato o chiamata passata a una persona.')
 ];
 
 export const DEFAULT_REALTIME_MODEL = 'gpt-realtime-2.1';
@@ -77,7 +78,8 @@ PASSARE A UNA PERSONA
 Se il cliente lo chiede, o se l'ordine è anomalo o arriva a ${largeOrderThreshold} pezzi, non confermarlo: dillo in una frase e usa transfer_to_human.
 
 CHIUSURA
-Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato chiudi in una frase, senza promettere tempi che non conosci.`;
+Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato chiudi in una frase, senza promettere tempi che non conosci.
+Poi saluta normalmente e chiudi la telefonata con end_call: prima il saluto, poi end_call, mai mentre il cliente sta ancora parlando. Se dopo il saluto dice altro, riprendi la conversazione e chiuderai più tardi.`;
 }
 
 export interface TurnDetectionOptions {
@@ -189,7 +191,12 @@ export class ResponseScheduler {
   responseCreated() { this.active = true; this.owed = false; this.userTurn = false; }
   responseFinished() { this.active = false; this.flush(); }
   toolStarted() { this.pending += 1; }
-  toolFinished() { this.pending = Math.max(0, this.pending - 1); this.owed = !this.userTurn; this.flush(); }
+  /** expectsAnswer false per i tool che non devono far ripartire l'agente, come la chiusura. */
+  toolFinished(expectsAnswer = true) {
+    this.pending = Math.max(0, this.pending - 1);
+    this.owed = (this.owed || expectsAnswer) && !this.userTurn;
+    this.flush();
+  }
   /** Il cliente sta parlando: risponderà il VAD, non dobbiamo accodare un turno nostro sopra il suo. */
   userSpeechStarted() { this.owed = false; this.userTurn = true; }
 
@@ -197,6 +204,34 @@ export class ResponseScheduler {
     if (!this.owed || this.active || this.pending > 0) return;
     this.owed = false;
     this.send();
+  }
+}
+
+/**
+ * Chiude la telefonata senza tagliare la voce: il modello dichiara che la chiamata è finita,
+ * la chiusura vera parte solo quando ha smesso di parlare e dopo una pausa di cortesia.
+ * Se il cliente riprende a parlare la chiusura salta: ha ancora qualcosa da dire.
+ */
+export class CallCloser {
+  private allowed = false;
+  private requested = false;
+  private timer?: ReturnType<typeof setTimeout>;
+  constructor(private readonly hangup: () => void, private readonly graceMs = 3000) {}
+
+  /** Consentita solo a ordine confermato o chiamata passata a una persona. */
+  allow() { this.allowed = true; }
+  request() {
+    if (!this.allowed || this.graceMs <= 0) return false;
+    this.requested = true;
+    return true;
+  }
+  responseFinished() { if (this.requested) this.arm(); }
+  userSpeechStarted() { this.requested = false; this.cancel(); }
+  cancel() { if (this.timer) { clearTimeout(this.timer); this.timer = undefined; } }
+
+  private arm() {
+    this.cancel();
+    this.timer = setTimeout(() => { this.timer = undefined; this.hangup(); }, this.graceMs);
   }
 }
 
@@ -216,6 +251,10 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.create' }));
   });
   let userSpeechStoppedAt: number | undefined;
+  const closer = new CallCloser(() => {
+    writeLog({ source: 'CALL', level: 'INFO', message: 'Chiusura chiamata dopo i saluti' });
+    void hangupCall(args.callId, args.apiKey).catch(() => writeLog({ source: 'CALL', level: 'WARN', message: 'Chiusura chiamata non riuscita' }));
+  }, hangupGraceMs());
   ws.on('open', () => {
     void args.store.markCallConnected(args.callId).catch(() => undefined);
     writeLog({ source: 'SIDEBAND', level: 'INFO', message: 'WebSocket connected' });
@@ -231,6 +270,7 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     }
     if (event.type === 'response.done') {
       scheduler.responseFinished();
+      closer.responseFinished();
       const usage = usageFromEvent(event);
       if (usage) await args.store.addCallUsage(args.callId, usage);
       if (await args.store.getTestModeUntil(args.restaurantId)) {
@@ -245,6 +285,7 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     }
     if (event.type === 'input_audio_buffer.speech_started') {
       scheduler.userSpeechStarted();
+      closer.userSpeechStarted();
       if (await isTestMode(args.store, args.restaurantId)) writeLog({ source: 'CALL', level: 'DEBUG', message: 'User speech started' });
       return;
     }
@@ -272,15 +313,25 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     scheduler.toolStarted();
     let output: unknown;
     let parsed: any;
+    let closing = false;
     try {
       parsed = event.arguments ? JSON.parse(event.arguments) : {};
-      const result = await engine.execute(event.name, parsed);
-      output = toolOutputForModel(event.name, result);
-      writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, result) });
-      const state = orderStateMessage(result);
-      if (state) writeLog({ source: 'ORDER', level: 'DEBUG', message: state });
-      if (event.name === 'transfer_to_human' && process.env.HUMAN_TRANSFER_URI) {
-        await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
+      if (event.name === 'end_call') {
+        // Non passa dall'OrderEngine: è controllo della telefonata, non un'operazione sull'ordine.
+        closing = closer.request();
+        output = { ok: closing };
+        writeLog({ source: 'TOOL', level: 'INFO', message: closing ? 'end_call accettato' : 'end_call rifiutato: ordine non concluso' });
+      } else {
+        const result = await engine.execute(event.name, parsed);
+        output = toolOutputForModel(event.name, result);
+        writeLog({ source: 'TOOL', level: 'INFO', message: toolMessage(event.name, parsed, result) });
+        const state = orderStateMessage(result);
+        if (state) writeLog({ source: 'ORDER', level: 'DEBUG', message: state });
+        if (event.name === 'confirm_order') closer.allow();
+        if (event.name === 'transfer_to_human') {
+          closer.allow();
+          if (process.env.HUMAN_TRANSFER_URI) await referCall(args.callId, process.env.HUMAN_TRANSFER_URI, args.apiKey);
+        }
       }
     } catch (error) {
       output = { error: error instanceof Error ? error.message : 'Errore del backend' };
@@ -289,9 +340,10 @@ export function connectSideband(args: { callId: string; restaurantId: string; ca
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
     }
-    scheduler.toolFinished();
+    scheduler.toolFinished(!closing);
   });
   ws.on('close', () => {
+    closer.cancel();
     void args.store.finishCall(args.callId).catch(() => undefined);
     writeLog({ source: 'CALL', level: 'INFO', message: 'Call ended' });
     writeLog({ source: 'SIDEBAND', level: 'INFO', message: 'WebSocket closed' });
@@ -357,6 +409,20 @@ async function isTestMode(store: Store, restaurantId: string) {
 function quotedTranscript(value: unknown) {
   const transcript = typeof value === 'string' ? value.trim() : '';
   return transcript ? `"${transcript.slice(0, 450)}"` : 'Transcript unavailable';
+}
+
+/** Pausa di cortesia fra il saluto e la chiusura. AUTO_HANGUP_SECONDS=0 disattiva la chiusura automatica. */
+function hangupGraceMs() {
+  const configured = Number(process.env.AUTO_HANGUP_SECONDS);
+  if (!Number.isFinite(configured) || configured < 0) return 3000;
+  return Math.min(15, configured) * 1000;
+}
+
+async function hangupCall(callId: string, apiKey: string) {
+  const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(callId)}/hangup`, {
+    method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  if (!response.ok) throw new Error(`OpenAI hangup failed (${response.status})`);
 }
 
 async function referCall(callId: string, targetUri: string, apiKey: string) {
