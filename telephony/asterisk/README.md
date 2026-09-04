@@ -11,7 +11,7 @@ Il gateway previsto è `sipcall Classic → Asterisk 22 in WSL2 → OpenAI Realt
 5. Ricaricare PJSIP/dialplan e verificare TLS 5061, codec negoziato e RTP.
 6. Infine testare webhook, sideband e ordine completo.
 
-La destinazione OpenAI UE è `sip:OPENAI_PROJECT_ID@sip-eu.api.openai.com;transport=tls`. Il fallback locale deve riprodurre un messaggio e chiudere senza loop. Non registrare audio.
+La destinazione predefinita per un progetto OpenAI con residenza `Global` è `sip:OPENAI_PROJECT_ID@sip.api.openai.com;transport=tls`. Usare `sip-eu.api.openai.com` soltanto per un progetto configurato con residenza dati europea. Il fallback locale deve riprodurre un messaggio e chiudere senza loop. Non registrare audio.
 
 ## Heartbeat
 

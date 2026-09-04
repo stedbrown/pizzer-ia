@@ -5,6 +5,7 @@ protocol=tls
 bind=0.0.0.0:5061
 method=tlsv1_2
 verify_server=yes
+allow_wildcard_certs=yes
 ca_list_file=/etc/ssl/certs/ca-certificates.crt
 allow_reload=yes
 
@@ -20,9 +21,9 @@ direct_media=no
 rtp_symmetric=yes
 force_rport=yes
 rewrite_contact=yes
-from_domain=sip-eu.api.openai.com
+from_domain=sip.api.openai.com
 aors=openai-realtime
 
 [openai-realtime]
 type=aor
-contact=sip:sip-eu.api.openai.com:5061;transport=tls
+contact=sip:sip.api.openai.com:5061;transport=tls

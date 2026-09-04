@@ -2,6 +2,17 @@
 
 Pizzer-IA è un centralinista telefonico AI per pizzerie. sipcall consegna la chiamata ad Asterisk in WSL2, che la inoltra via SIP a OpenAI Realtime; il backend controlla menu e tool, calcola i prezzi, salva gli ordini in PostgreSQL e serve la dashboard.
 
+## Stato attuale
+
+- MVP single-tenant pubblicato su Northflank con PostgreSQL e dashboard amministrativa.
+- Asterisk 22 e sipcall sono attivi in Ubuntu/WSL; la registrazione SIP è monitorata ogni circa 25 secondi.
+- WSL viene mantenuto attivo senza finestre tramite l'attività Windows `Pizzer-IA WSL Keepalive`; systemd gestisce Asterisk e `pizzer-ia-heartbeat` con riavvio automatico.
+- La dashboard mostra `Ordini`, `Menu`, `Telefonia` e `Live Logs`; gli eventi arrivano tramite SSE e vengono conservati per massimo 24 ore/1.000 righe.
+- La modalità test abilita diagnostica SIP strutturata per massimo 15 minuti e si disattiva automaticamente.
+- Health check, database, heartbeat, SSE e modalità test sono verificati. La chiamata reale sipcall → Asterisk → OpenAI Realtime è stata collaudata con risposta vocale e RTP; resta il collaudo completo di acquisizione e conferma ordine.
+
+Dashboard di produzione: <https://p01--pizzer-ia-app--wbkbwwjx9sbm.code.run/>
+
 ## Architettura
 
 ```text
@@ -68,7 +79,7 @@ L'applicazione applica in ordine i file `migrations/*.sql`, registrandoli in `_m
 
 ## Flusso OpenAI Realtime SIP
 
-1. sipcall inoltra il DID ad Asterisk; Asterisk inoltra a `sip:OPENAI_PROJECT_ID@sip-eu.api.openai.com;transport=tls`.
+1. sipcall inoltra il DID ad Asterisk; Asterisk inoltra a `sip:OPENAI_PROJECT_ID@sip.api.openai.com;transport=tls` (oppure `sip-eu.api.openai.com` per un progetto con residenza dati europea).
 2. OpenAI invia `realtime.call.incoming` a `POST /webhooks/openai`.
 3. Il backend verifica la firma sul raw body e registra l'evento in modo idempotente.
 4. Il backend associa il DID alla pizzeria, salva la chiamata e accetta `POST /v1/realtime/calls/{call_id}/accept`.
