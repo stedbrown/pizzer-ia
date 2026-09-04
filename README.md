@@ -125,6 +125,7 @@ Checklist manuale per una chiamata in Modalità test:
 - `POST /api/telephony/events` — batch di eventi telefonici strutturati con lo stesso token
 - `GET /api/telephony/status` — stato telefonia, autenticato
 - `GET /api/usage/monthly` — utilizzo/costi mensili, autenticato
+- `GET /api/conversations` — telefonate ricostruite come dialogo, autenticato
 - `GET /api/live-logs` — eventi recenti redatti, autenticato
 - `GET /api/live-logs/stream` — stream SSE dei nuovi eventi, autenticato
 - `GET|POST /api/test-mode` — stato/attivazione diagnostica per massimo 15 minuti
@@ -152,6 +153,12 @@ Checklist manuale per una chiamata in Modalità test:
 - Chiamata non arriva: seguire in ordine Hello World, Echo e poi OpenAI; verificare registrazione sipcall, Project ID, TLS/5061, codec e RTP.
 - Chiamata arriva ma non parla: controllare API key, disponibilità del modello e log dell'accept endpoint.
 - Tool fallisce: verificare che menu/modificatori siano attivi e che gli ID provengano dai risultati del backend.
+
+## Conversazioni
+
+La tab `Conversazioni` ricostruisce ogni telefonata come dialogo leggibile — battute del cliente, risposte dell'agente, tool usati e stato dell'ordine in ordine cronologico, con esito e durata. È una vista sugli eventi già registrati (`src/conversations.ts`): nessuna tabella nuova, nessuna raccolta dati aggiuntiva, stessa redaction e stessa retention dei Live Logs.
+
+Le trascrizioni esistono soltanto per le chiamate fatte in Modalità test: fuori da quella finestra non vengono richieste a OpenAI né salvate, quindi una chiamata normale compare senza battute. Il rumore tecnico — SIP, RTP, heartbeat, marker di inizio e fine parlato — resta nei Live Logs e non entra nel dialogo. In Modalità test vengono registrati anche il barge-in e il tempo di risposta dopo la fine del parlato del cliente, utili per valutare la fluidità.
 
 ## Live Logs
 

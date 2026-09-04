@@ -80,9 +80,23 @@ function renderTestMode(){
 async function loadTestMode(){const state=await request('/api/test-mode');testModeExpiresAt=state.expiresAt||undefined;renderTestMode()}
 document.querySelector('#testMode').addEventListener('click',async()=>{const enabled=!testModeExpiresAt;const state=await request('/api/test-mode',{method:'POST',body:JSON.stringify({enabled})});testModeExpiresAt=state.expiresAt||undefined;renderTestMode();toast(enabled?'Modalità test attiva per massimo 15 minuti':'Modalità test disattivata')});
 document.querySelectorAll('[data-log-filter]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-log-filter]').forEach(item=>item.classList.remove('active'));button.classList.add('active');logFilter=button.dataset.logFilter;renderLogs()}));
+const turnLabel={customer:'Cliente',agent:'Pizzeria',tool:'',system:''};
+async function loadConversations(){
+  const calls=await request('/api/conversations?limit=10');
+  const clock=iso=>new Intl.DateTimeFormat('it-CH',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(iso));
+  document.querySelector('#conversationList').innerHTML=calls.length?calls.map(call=>`
+    <details class="conversation" ${calls[0]===call?'open':''}>
+      <summary>
+        <span class="conversation-time">${clock(call.startedAt)}</span>
+        <span class="state ${call.outcome==='confermato'?'good':call.outcome==='trasferita'?'stale':'neutral'}">${esc(call.outcome)}</span>
+        <small>${call.durationSeconds}s · ${call.turns.filter(t=>t.role==='customer'||t.role==='agent').length} battute</small>
+      </summary>
+      ${call.turns.map(turn=>`<div class="turn ${esc(turn.role)}"><span class="turn-time">${clock(turn.at)}</span><span class="turn-role">${esc(turnLabel[turn.role]||'')}</span><span class="turn-text">${esc(maskPhones(turn.text))}</span></div>`).join('')}
+    </details>`).join(''):'<div class="empty">Nessuna telefonata registrata. Le trascrizioni esistono solo per le chiamate fatte in Modalità test.</div>';
+}
 setInterval(renderTestMode,1000);
-document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-tab],.panel').forEach(x=>x.classList.remove('active'));button.classList.add('active');document.querySelector(`#${button.dataset.tab}`).classList.add('active');if(button.dataset.tab==='menu')loadMenu();if(button.dataset.tab==='telephony')loadTelephony().catch(e=>document.querySelector('#telephonyCards').innerHTML=`<div class="empty">${esc(e.message)}</div>`);if(button.dataset.tab==='liveLogs'){Promise.all([loadLogs(),loadTestMode()]).catch(e=>document.querySelector('#liveLogList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);startLogStream()}}));
-document.querySelector('#refresh').addEventListener('click',()=>{loadOrders();if(document.querySelector('#telephony').classList.contains('active'))loadTelephony();if(document.querySelector('#liveLogs').classList.contains('active'))Promise.all([loadLogs(),loadTestMode()]);toast('Dati aggiornati')});
+document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-tab],.panel').forEach(x=>x.classList.remove('active'));button.classList.add('active');document.querySelector(`#${button.dataset.tab}`).classList.add('active');if(button.dataset.tab==='menu')loadMenu();if(button.dataset.tab==='telephony')loadTelephony().catch(e=>document.querySelector('#telephonyCards').innerHTML=`<div class="empty">${esc(e.message)}</div>`);if(button.dataset.tab==='conversations')loadConversations().catch(e=>document.querySelector('#conversationList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);if(button.dataset.tab==='liveLogs'){Promise.all([loadLogs(),loadTestMode()]).catch(e=>document.querySelector('#liveLogList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);startLogStream()}}));
+document.querySelector('#refresh').addEventListener('click',()=>{loadOrders();if(document.querySelector('#telephony').classList.contains('active'))loadTelephony();if(document.querySelector('#conversations').classList.contains('active'))loadConversations();if(document.querySelector('#liveLogs').classList.contains('active'))Promise.all([loadLogs(),loadTestMode()]);toast('Dati aggiornati')});
 loadOrders().catch(e=>document.querySelector('#ordersList').innerHTML=`<div class="empty">${esc(e.message)}</div>`);
 loadTelephony().catch(()=>{});
 setInterval(()=>{if(document.querySelector('#orders').classList.contains('active'))loadOrders()},15000);

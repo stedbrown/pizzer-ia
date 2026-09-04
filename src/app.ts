@@ -10,6 +10,7 @@ import type { NewLiveLogEvent, OrderStatus } from './types.js';
 import { verifyOpenAIWebhook } from './webhook-signature.js';
 import { acceptRealtimeCall, buildTurnDetection, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE } from './realtime.js';
 import { publicLogEvent, safeLogEvent } from './live-logs.js';
+import { buildConversations } from './conversations.js';
 
 export interface AppOptions {
   store: Store;
@@ -142,6 +143,11 @@ export function buildApp(options: AppOptions) {
     totalCost: null,
     openaiCostCurrency: 'USD'
   }));
+  app.get('/api/conversations', { preHandler: auth }, async (request) => {
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(20).default(10) }).parse(request.query);
+    const events = (await options.store.listLogEvents(DEMO_RESTAURANT_ID, 1000)).map(publicLogEvent);
+    return buildConversations(events).slice(0, query.limit);
+  });
   app.get('/api/live-logs', { preHandler: auth }, async (request) => {
     const query = z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }).parse(request.query);
     return (await options.store.listLogEvents(DEMO_RESTAURANT_ID, query.limit)).map(publicLogEvent);

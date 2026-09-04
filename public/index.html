@@ -26,6 +26,7 @@
       <button data-tab="orders" class="active">Ordini <span id="orderCount">0</span></button>
       <button data-tab="menu">Menu</button>
       <button data-tab="telephony">Telefonia</button>
+      <button data-tab="conversations">Conversazioni</button>
       <button data-tab="liveLogs">Live Logs</button>
     </nav>
 
@@ -53,6 +54,14 @@
         <article><span>sipcall Classic</span><strong id="sipcallCost">—</strong><small>canone mensile attuale</small></article>
         <article><span>Totale complessivo</span><strong>N/D</strong><small>cambio USD/CHF e infrastruttura non inclusi</small></article>
       </div>
+    </section>
+
+    <section id="conversations" class="panel" aria-live="polite">
+      <div class="section-heading">
+        <div><p class="eyebrow">QUALITÀ CONVERSAZIONALE</p><h2>Telefonate</h2></div>
+      </div>
+      <div id="conversationList" class="conversation-list"><div class="empty">Nessuna telefonata registrata. Le trascrizioni esistono solo per le chiamate fatte in Modalità test.</div></div>
+      <p class="log-note">Ricostruite dagli eventi già registrati · numeri mascherati · conservate al massimo 24 ore</p>
     </section>
 
     <section id="liveLogs" class="panel" aria-live="polite">
