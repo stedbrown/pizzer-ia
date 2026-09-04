@@ -16,6 +16,8 @@ const app = buildApp({
   apiKey: process.env.OPENAI_API_KEY,
   realtimeModel: process.env.OPENAI_REALTIME_MODEL,
   voice: process.env.OPENAI_VOICE,
+  greeting: process.env.OPENAI_GREETING,
+  largeOrderThreshold: optionalInt('LARGE_ORDER_THRESHOLD'),
   heartbeatSecret: process.env.HEARTBEAT_SECRET
 });
 
@@ -30,4 +32,12 @@ function required(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
+}
+
+function optionalInt(name: string) {
+  const value = process.env[name];
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) throw new Error(`${name} must be an integer`);
+  return parsed;
 }

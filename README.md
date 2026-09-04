@@ -57,8 +57,10 @@ npm run check
 | `OPENAI_API_KEY` | per chiamate | Chiave del progetto OpenAI |
 | `OPENAI_PROJECT_ID` | per SIP | Project ID usato nella SIP URI |
 | `OPENAI_WEBHOOK_SECRET` | per webhook | Signing secret del webhook OpenAI |
-| `OPENAI_REALTIME_MODEL` | no | Default `gpt-realtime-2.1-mini` |
+| `OPENAI_REALTIME_MODEL` | no | Modello Realtime; default `gpt-realtime-2.1-mini`, usare `gpt-realtime-2.1` per il test qualità |
 | `OPENAI_VOICE` | no | Default `marin` |
+| `OPENAI_GREETING` | no | Saluto iniziale breve, default `Pizzeria, buongiorno! Mi dica.` |
+| `LARGE_ORDER_THRESHOLD` | no | Da questa quantità l'AI propone il passaggio umano; default e massimo operativo `20` |
 | `HEARTBEAT_SECRET` | per monitoraggio | Token dedicato Asterisk → backend |
 | `RESTAURANT_DID` | no | DID documentale/configurativo |
 | `HUMAN_TRANSFER_URI` | no | Destinazione SIP/tel per trasferimento umano |
@@ -87,6 +89,27 @@ L'applicazione applica in ordine i file `migrations/*.sql`, registrandoli in `_m
 6. `confirm_order` ricalcola il totale e scrive ordine e righe in una transazione.
 
 Non si registra audio. Il caller ID viene usato solo come recapito operativo e non viene stampato per intero nei log.
+
+### Modello e qualità conversazionale
+
+Il modello si sceglie in un solo punto tramite `OPENAI_REALTIME_MODEL`, quindi l'A/B test non richiede modifiche al codice:
+
+- `gpt-realtime-2.1-mini`: baseline rapida ed economica;
+- `gpt-realtime-2.1`: variante da provare per maggiore qualità e capacità di seguire istruzioni;
+- `gpt-realtime-1.5`: alternativa indicata dal catalogo OpenAI come modello voice di riferimento; è documentata ma non viene selezionata automaticamente.
+
+Il VAD usa `server_vad`, `silence_duration_ms: 550` e `interrupt_response: true`. Questi valori, già adatti a una telefonata normale, restano invariati: il test reale deve verificare il barge-in prima di qualsiasi ulteriore tuning.
+
+Checklist manuale per una chiamata in Modalità test:
+
+- A — «Due Diavole e una Margherita senza mozzarella»: niente menu recitato, chiede solo i dati mancanti.
+- B — «Due Diavole» / «No aspetta, una sola»: aggiorna senza ricominciare né riepilogare tutto.
+- C — «Una pizza kebab»: non inventa il prodotto e propone al massimo un'alternativa reale.
+- D — «Non so cosa prendere»: fa una domanda utile o propone 2-3 opzioni, non l'intero menu.
+- E — interrompere l'AI a metà frase: l'audio si ferma e l'AI ascolta la correzione.
+- F — «Ciao come va? Senti, volevo prendere un paio di pizze»: risponde naturalmente, non come un parser.
+- G — «Mille Diavole»: non conferma e chiama `transfer_to_human`.
+- H — «Voglio parlare con una persona»: risponde brevemente e chiama `transfer_to_human`.
 
 ## API
 
@@ -128,4 +151,4 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 
 La dashboard integra uno stream SSE di eventi strutturati provenienti da Asterisk, SIP, heartbeat, webhook, sideband, tool, OrderEngine, PostgreSQL e backend. PostgreSQL conserva al massimo gli ultimi 1.000 eventi per ristorante e non oltre 24 ore. Secret, header di autorizzazione, connection string e numeri telefonici vengono redatti prima della scrittura e nuovamente prima della risposta UI.
 
-La modalità test scade automaticamente dopo 15 minuti. Il collector outbound abilita temporaneamente solo il logger PJSIP, estrae REGISTER/INVITE/100/180/200/ACK/BYE dal journal e lo spegne alla scadenza o al riavvio. RTP viene rappresentato con sommari periodici, senza debug per-pacchetto e senza nuove porte inbound.
+La modalità test scade automaticamente dopo 15 minuti. In tale finestra abilita anche la trascrizione diagnostica dell'utente e registra in Live Logs, con redaction e limite di conservazione, inizio/fine parlato e trascrizioni USER/OPENAI; fuori dalla modalità test le trascrizioni non vengono richieste né salvate. Il collector outbound abilita temporaneamente solo il logger PJSIP, estrae REGISTER/INVITE/100/180/200/ACK/BYE dal journal e lo spegne alla scadenza o al riavvio. RTP viene rappresentato con sommari periodici, senza debug per-pacchetto e senza nuove porte inbound.

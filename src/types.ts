@@ -91,7 +91,7 @@ export interface MonthlyUsage extends CallUsage {
   usageSource: 'REAL' | 'N/D';
 }
 
-export type LogSource = 'ASTERISK' | 'SIPCALL' | 'SIP' | 'CALL' | 'RTP' | 'HEARTBEAT' | 'OPENAI' | 'WEBHOOK' | 'SIDEBAND' | 'TOOL' | 'ORDER' | 'DB' | 'BACKEND';
+export type LogSource = 'ASTERISK' | 'SIPCALL' | 'SIP' | 'CALL' | 'RTP' | 'HEARTBEAT' | 'USER' | 'OPENAI' | 'WEBHOOK' | 'SIDEBAND' | 'TOOL' | 'ORDER' | 'DB' | 'BACKEND';
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 export type LogCategory = 'TELEPHONY' | 'OPENAI' | 'BACKEND' | 'TOOL' | 'DATABASE';
 

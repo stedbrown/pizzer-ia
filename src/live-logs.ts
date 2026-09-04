@@ -2,7 +2,7 @@ import type { LogCategory, LiveLogEvent, NewLiveLogEvent } from './types.js';
 
 const categoryBySource: Record<NewLiveLogEvent['source'], LogCategory> = {
   ASTERISK: 'TELEPHONY', SIPCALL: 'TELEPHONY', SIP: 'TELEPHONY', CALL: 'TELEPHONY', RTP: 'TELEPHONY', HEARTBEAT: 'TELEPHONY',
-  OPENAI: 'OPENAI', WEBHOOK: 'OPENAI', SIDEBAND: 'OPENAI', TOOL: 'TOOL', ORDER: 'BACKEND', DB: 'DATABASE', BACKEND: 'BACKEND'
+  USER: 'OPENAI', OPENAI: 'OPENAI', WEBHOOK: 'OPENAI', SIDEBAND: 'OPENAI', TOOL: 'TOOL', ORDER: 'BACKEND', DB: 'DATABASE', BACKEND: 'BACKEND'
 };
 
 export function safeLogEvent(event: Omit<NewLiveLogEvent, 'category'> & { category?: LogCategory }): NewLiveLogEvent {

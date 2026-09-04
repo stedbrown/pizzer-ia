@@ -18,6 +18,8 @@ export interface AppOptions {
   apiKey?: string;
   realtimeModel?: string;
   voice?: string;
+  greeting?: string;
+  largeOrderThreshold?: number;
   heartbeatSecret?: string;
   publicDir?: string;
 }
@@ -190,7 +192,12 @@ export function buildApp(options: AppOptions) {
       }
       await options.store.saveCall({ callId, from, to, restaurantId: restaurant.id });
       await emitLog({ source: 'DB', level: 'INFO', message: 'Call record created', callId });
-      await acceptRealtimeCall({ callId, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey, model: options.realtimeModel ?? 'gpt-realtime-2.1-mini', voice: options.voice ?? 'marin' });
+      const testMode = Boolean(await options.store.getTestModeUntil(restaurant.id));
+      await acceptRealtimeCall({
+        callId, restaurantName: restaurant.name, callerPhone: from, apiKey: options.apiKey,
+        model: options.realtimeModel ?? 'gpt-realtime-2.1-mini', voice: options.voice ?? 'marin',
+        greeting: options.greeting, largeOrderThreshold: options.largeOrderThreshold, testMode
+      });
       await emitLog({ source: 'OPENAI', level: 'INFO', message: 'Realtime call accepted', callId });
       connectSideband({ callId, restaurantId: restaurant.id, callerPhone: from, apiKey: options.apiKey, store: options.store, log: emitLog });
       return { ok: true };
