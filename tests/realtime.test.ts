@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildRealtimeSession, buildTurnDetection, CallCloser, centralistInstructions, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE,
+  buildRealtimeSession, buildTurnDetection, CallCloser, centralistInstructions, confirmationResponseInstructions, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE,
   orderStateMessage, phoneFromSipHeader, realtimeTools, ResponseScheduler, supportsParallelToolCalls, toolOutputForModel
 } from '../src/realtime.js';
 
@@ -42,8 +42,16 @@ describe('Realtime voice agent', () => {
 
   it('tells the agent to greet before hanging up', () => {
     const prompt = centralistInstructions('Pizzeria Test');
-    expect(prompt).toContain('prima il saluto, poi end_call');
+    expect(prompt).toContain('prima comunica l\'orario e completa il saluto, poi end_call');
     expect(prompt).toContain('mai mentre il cliente sta ancora parlando');
+  });
+
+  it('forces the confirmation reply to include the backend time and a cordial goodbye', () => {
+    expect(confirmationResponseInstructions({ readyTime: '19:25', fulfillment: 'pickup' }))
+      .toContain('il suo ordine sarà pronto verso le 19:25. Grazie e buona giornata!');
+    expect(confirmationResponseInstructions({ readyTime: '20:10', fulfillment: 'delivery' }))
+      .toContain('la consegna è prevista verso le 20:10');
+    expect(confirmationResponseInstructions({ readyTime: 'domani forse' })).toBeUndefined();
   });
 
   it('uses a natural short greeting and strong conversational rules', () => {
@@ -273,6 +281,16 @@ describe('ResponseScheduler', () => {
     expect(send).not.toHaveBeenCalled();      // la response con le function call è ancora attiva
     scheduler.responseFinished();
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies confirmation instructions only to the next response', () => {
+    const send = vi.fn();
+    const scheduler = new ResponseScheduler(send);
+    scheduler.responseCreated();
+    scheduler.toolStarted();
+    scheduler.toolFinished(true, 'comunica le 19:25 e saluta');
+    scheduler.responseFinished();
+    expect(send).toHaveBeenCalledWith('comunica le 19:25 e saluta');
   });
 
   it('answers immediately when no response is running', () => {

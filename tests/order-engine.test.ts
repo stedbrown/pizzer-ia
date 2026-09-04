@@ -36,6 +36,7 @@ describe('OrderEngine', () => {
     expect(summary.totalCents).toBe(1400);
     const first: any = await engine.execute('confirm_order', { confirmed: true });
     const second: any = await engine.execute('confirm_order', { confirmed: true });
+    expect(first).toMatchObject({ fulfillment: 'pickup', readyTime: expect.stringMatching(/^\d{2}:\d{2}$/) });
     expect(second.confirmedOrderId).toBe(first.orderNumber ? store.orders[0]?.id : undefined);
     expect(store.orders).toHaveLength(1);
   });

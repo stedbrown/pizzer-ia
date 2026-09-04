@@ -134,7 +134,7 @@ export class OrderEngine {
         await this.store.saveDraft(draft);
         this.writeLog({ source: 'ORDER', level: 'INFO', message: `Order confirmed: ${order.orderNumber}` });
         return { orderId: order.id, orderNumber: order.orderNumber, totalCents: order.totalCents, status: order.status,
-          readyTime: formatLocalTime(ready, settings.timezone) };
+          fulfillment: order.fulfillment, readyTime: formatLocalTime(ready, settings.timezone) };
       }
       case 'transfer_to_human': return { available: Boolean(process.env.HUMAN_TRANSFER_URI), message: process.env.HUMAN_TRANSFER_URI ? 'Trasferimento in corso' : 'Trasferimento umano non configurato' };
       default: throw new OrderError(`Tool sconosciuto: ${name}`);

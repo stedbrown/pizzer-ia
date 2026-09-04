@@ -23,7 +23,7 @@ export const realtimeTools = [
   tool('set_delivery_address', 'Imposta indirizzo completo per la consegna.', { address: { type: 'string' } }, ['address']),
   tool('calculate_total', 'Totale ufficiale calcolato dal backend. Chiamalo quando il cliente chiede quanto viene.'),
   tool('get_order_summary', 'Riepilogo ufficiale con totale; abilita la conferma successiva. Usalo una sola volta, subito prima della conferma finale.'),
-  tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente, pronunciato dopo il riepilogo.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
+  tool('confirm_order', 'Conferma solo dopo un sì esplicito del cliente, pronunciato dopo il riepilogo. Il risultato contiene readyTime: dopo la conferma devi comunicarlo, ringraziare, salutare e poi usare end_call.', { confirmed: { type: 'boolean', const: true } }, ['confirmed']),
   tool('transfer_to_human', 'Passa la chiamata a una persona: se il cliente lo chiede, per allergie o informazioni non verificabili, oppure per ordini anomali.'),
   tool('request_callback', 'Registra la richiesta di essere richiamati dalla pizzeria. Usalo quando non è possibile passare una persona subito.', { phone: { type: 'string' }, reason: { type: 'string' } }, ['reason']),
   tool('end_call', 'Chiude la telefonata. Usalo solo dopo aver salutato e solo a ordine confermato, richiamo registrato o chiamata passata a una persona.')
@@ -89,8 +89,20 @@ PASSARE A UNA PERSONA
 Se il cliente lo chiede, o se l'ordine è anomalo o arriva a ${largeOrderThreshold} pezzi, non confermarlo: ${transfer}.
 
 CHIUSURA
-Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato di' l'ora indicata da confirm_order in readyTime — quella è la stima della pizzeria, non inventarne altre — e chiudi in una frase.
-Poi saluta normalmente e chiudi la telefonata con end_call: prima il saluto, poi end_call, mai mentre il cliente sta ancora parlando. Se dopo il saluto dice altro, riprendi la conversazione e chiuderai più tardi.`;
+Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato devi SEMPRE comunicare l'ora indicata da confirm_order in readyTime — è la stima della pizzeria, non inventarne altre — poi ringraziare e salutare cordialmente nella stessa frase, senza ripetere ordine o totale.
+Subito dopo usa end_call: prima comunica l'orario e completa il saluto, poi end_call, mai mentre il cliente sta ancora parlando. Se dopo il saluto dice altro, riprendi la conversazione e chiuderai più tardi.`;
+}
+
+/** Istruzione monouso per la risposta successiva a confirm_order: usa solo dati calcolati dal backend. */
+export function confirmationResponseInstructions(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const value = result as Record<string, unknown>;
+  const readyTime = typeof value.readyTime === 'string' && /^\d{1,2}:\d{2}$/.test(value.readyTime) ? value.readyTime : undefined;
+  if (!readyTime) return undefined;
+  const timing = value.fulfillment === 'delivery'
+    ? `la consegna è prevista verso le ${readyTime}`
+    : `il suo ordine sarà pronto verso le ${readyTime}`;
+  return `L'ordine è confermato. Dica al cliente esattamente una sola frase cordiale: "Perfetto, ${timing}. Grazie e buona giornata!" Dopo aver pronunciato per intero la frase, chiami end_call. Non faccia domande, non ripeta prodotti o totale e non aggiunga altro.`;
 }
 
 export interface TurnDetectionOptions {
@@ -202,24 +214,28 @@ export class ResponseScheduler {
   private pending = 0;
   private owed = false;
   private userTurn = false;
-  constructor(private readonly send: () => void) {}
+  private instructions?: string;
+  constructor(private readonly send: (instructions?: string) => void) {}
 
   responseCreated() { this.active = true; this.owed = false; this.userTurn = false; }
   responseFinished() { this.active = false; this.flush(); }
   toolStarted() { this.pending += 1; }
   /** expectsAnswer false per i tool che non devono far ripartire l'agente, come la chiusura. */
-  toolFinished(expectsAnswer = true) {
+  toolFinished(expectsAnswer = true, instructions?: string) {
     this.pending = Math.max(0, this.pending - 1);
     this.owed = (this.owed || expectsAnswer) && !this.userTurn;
+    if (instructions && !this.userTurn) this.instructions = instructions;
     this.flush();
   }
   /** Il cliente sta parlando: risponderà il VAD, non dobbiamo accodare un turno nostro sopra il suo. */
-  userSpeechStarted() { this.owed = false; this.userTurn = true; }
+  userSpeechStarted() { this.owed = false; this.instructions = undefined; this.userTurn = true; }
 
   private flush() {
     if (!this.owed || this.active || this.pending > 0) return;
     this.owed = false;
-    this.send();
+    const instructions = this.instructions;
+    this.instructions = undefined;
+    this.send(instructions);
   }
 }
 
@@ -285,8 +301,10 @@ export function connectSideband(args: { callId: string; restaurantId: string; re
   const ws = new WebSocket(`wss://api.openai.com/v1/realtime?call_id=${encodeURIComponent(args.callId)}`, { headers: { Authorization: `Bearer ${args.apiKey}` } });
   const writeLog = (event: LogInput) => { void args.log?.({ ...event, callId: event.callId ?? args.callId }).catch(() => undefined); };
   const engine = new OrderEngine(args.store, args.restaurantId, args.callId, args.callerPhone, args.log);
-  const scheduler = new ResponseScheduler(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'response.create' }));
+  const scheduler = new ResponseScheduler((instructions) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+      type: 'response.create', ...(instructions ? { response: { instructions } } : {})
+    }));
   });
   let userSpeechStoppedAt: number | undefined;
   const closer = new CallCloser(() => {
@@ -352,6 +370,7 @@ export function connectSideband(args: { callId: string; restaurantId: string; re
     let output: unknown;
     let parsed: any;
     let closing = false;
+    let responseInstructions: string | undefined;
     try {
       parsed = event.arguments ? JSON.parse(event.arguments) : {};
       if (event.name === 'end_call') {
@@ -382,6 +401,7 @@ export function connectSideband(args: { callId: string; restaurantId: string; re
         if (state) writeLog({ source: 'ORDER', level: 'DEBUG', message: state });
         if (event.name === 'confirm_order') {
           closer.allow();
+          responseInstructions = confirmationResponseInstructions(result);
           void notifyCustomer(args, result, writeLog);
         }
       }
@@ -392,7 +412,7 @@ export function connectSideband(args: { callId: string; restaurantId: string; re
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } }));
     }
-    scheduler.toolFinished(!closing);
+    scheduler.toolFinished(!closing, responseInstructions);
   });
   ws.on('close', () => {
     closer.cancel();
