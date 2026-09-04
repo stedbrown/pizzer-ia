@@ -28,6 +28,7 @@ describe('HTTP application', () => {
     const response = await app.inject({ method: 'GET', url: '/api/telephony/status', headers: auth });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ provider: 'sipcall', plan: 'Classic', asteriskOnline: true, sipRegistration: 'registered', heartbeatState: 'current' });
+    expect(response.json()).toMatchObject({ realtimeModel: 'gpt-realtime-2.1', voice: 'marin', turnDetection: 'server_vad' });
     await store.updateTelephonyStatus('restaurant-demo', { asteriskOnline: true, sipRegistration: 'registered', checkedAt: new Date(Date.now() - 91_000).toISOString() });
     const stale = await app.inject({ method: 'GET', url: '/api/telephony/status', headers: auth });
     expect(stale.json()).toMatchObject({ heartbeatState: 'stale', asteriskOnline: null, sipRegistration: 'unknown' });

@@ -8,7 +8,7 @@ import type { Store } from './store.js';
 import { DEMO_RESTAURANT_ID } from './store.js';
 import type { NewLiveLogEvent, OrderStatus } from './types.js';
 import { verifyOpenAIWebhook } from './webhook-signature.js';
-import { acceptRealtimeCall, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE } from './realtime.js';
+import { acceptRealtimeCall, buildTurnDetection, connectSideband, DEFAULT_REALTIME_MODEL, DEFAULT_VOICE } from './realtime.js';
 import { publicLogEvent, safeLogEvent } from './live-logs.js';
 
 export interface AppOptions {
@@ -127,6 +127,10 @@ export function buildApp(options: AppOptions) {
       version: status.version, checkedAt: neverReceived ? null : status.checkedAt, heartbeatState,
       inboundStatus: status.inboundStatus, audioStatus: status.audioStatus,
       openaiRealtime: options.apiKey && options.webhookSecret ? 'ready' : status.openaiRealtime,
+      realtimeModel: options.realtimeModel ?? DEFAULT_REALTIME_MODEL,
+      voice: options.voice ?? DEFAULT_VOICE,
+      turnDetection: buildTurnDetection(options).type,
+      humanTransfer: Boolean(process.env.HUMAN_TRANSFER_URI),
       backendOnline: true, databaseOnline
     };
   });

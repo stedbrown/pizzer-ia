@@ -42,6 +42,8 @@ async function loadTelephony(){
     ['Asterisk',status.heartbeatState==='current'?stateLabel(status.asteriskOnline,'Online','Offline'):heartbeatUnavailable],
     ['Registrazione SIP',status.heartbeatState==='current'?stateLabel(status.sipRegistration==='registered','Registrata',status.sipRegistration==='unregistered'?'Non registrata':'N/D'):heartbeatUnavailable],
     ['OpenAI Realtime',stateLabel(status.openaiRealtime==='ready','Configurato','In attesa')],
+    ['Voice agent',`${esc(status.realtimeModel)} · ${esc(status.voice)} · ${esc(status.turnDetection)}`],
+    ['Trasferimento umano',stateLabel(status.humanTransfer,'Configurato','Non configurato')],
     ['Backend',stateLabel(status.backendOnline,'Online','Offline')],
     ['PostgreSQL',stateLabel(status.databaseOnline,'Connesso','Non connesso')]
   ].map(([name,value])=>`<article><span>${name}</span><strong>${value}</strong></article>`).join('');
