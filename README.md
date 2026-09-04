@@ -161,7 +161,7 @@ A ordine confermato o chiamata trasferita l'agente saluta e chiama `end_call`. L
 
 ## Conversazioni
 
-La tab `Conversazioni` ricostruisce ogni telefonata come dialogo leggibile — battute del cliente, risposte dell'agente, tool usati e stato dell'ordine in ordine cronologico, con esito e durata. È una vista sugli eventi già registrati (`src/conversations.ts`): nessuna tabella nuova, nessuna raccolta dati aggiuntiva, stessa redaction e stessa retention dei Live Logs.
+La tab `Conversazioni` ricostruisce ogni telefonata come dialogo leggibile. Ogni riga porta il tempo trascorso dall'inizio della chiamata, e ogni risposta dell'agente mostra quanto ha fatto attendere il cliente: verde sotto il secondo, ambra fino a due, rosso oltre. L'intestazione riassume esito, durata, numero di battute, attesa media e interruzioni, così si giudica una chiamata senza aprirla. I dettagli tecnici — tool e stato dell'ordine — restano nascosti dietro un interruttore per non competere con le battute. È una vista sugli eventi già registrati (`src/conversations.ts`): nessuna tabella nuova, nessuna raccolta dati aggiuntiva, stessa redaction e stessa retention dei Live Logs.
 
 Le trascrizioni esistono soltanto per le chiamate fatte in Modalità test: fuori da quella finestra non vengono richieste a OpenAI né salvate, quindi una chiamata normale compare senza battute. Il rumore tecnico — SIP, RTP, heartbeat, marker di inizio e fine parlato — resta nei Live Logs e non entra nel dialogo. In Modalità test vengono registrati anche il barge-in e il tempo di risposta dopo la fine del parlato del cliente, utili per valutare la fluidità.
 

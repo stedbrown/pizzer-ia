@@ -55,4 +55,39 @@ describe('Conversation log', () => {
   it('ignores events that belong to no call', () => {
     expect(buildConversations([event('BACKEND', 'Backend ready'), event('AGENT', '"ciao"')])).toEqual([]);
   });
+
+  it('moves the response delay onto the reply it measures', () => {
+    const [conversation = missing()] = buildConversations([
+      event('USER', '"due diavole"', 'call-1', 'DEBUG'),
+      event('CALL', 'Risposta iniziata dopo 2280 ms', 'call-1'),
+      event('AGENT', '"Certo. Ritiro o consegna?"', 'call-1', 'DEBUG')
+    ]);
+    // La misura era una riga a sé: come tale è rumore, accanto alla frase è una diagnosi.
+    expect(conversation.turns).toHaveLength(2);
+    expect(conversation.turns[1]).toMatchObject({ role: 'agent', latencyMs: 2280 });
+    expect(conversation.metrics).toMatchObject({ customerTurns: 1, agentTurns: 1, avgResponseMs: 2280, slowestResponseMs: 2280 });
+  });
+
+  it('counts the quality signals of the call', () => {
+    const [conversation = missing()] = buildConversations([
+      event('USER', '"una margherita"', 'call-1', 'DEBUG'),
+      event('CALL', 'Risposta iniziata dopo 600 ms', 'call-1'),
+      event('AGENT', '"Va bene."', 'call-1', 'DEBUG'),
+      event('CALL', 'Barge-in: risposta interrotta dal cliente', 'call-1'),
+      event('CALL', 'Risposta iniziata dopo 1400 ms', 'call-1'),
+      event('AGENT', '"Mi dica."', 'call-1', 'DEBUG'),
+      event('TOOL', 'confirm_order PZ-0007 → CHF 14.00', 'call-1')
+    ]);
+    expect(conversation.metrics).toMatchObject({ agentTurns: 2, toolCalls: 1, bargeIns: 1, avgResponseMs: 1000, slowestResponseMs: 1400 });
+    expect(conversation.headline).toBe('PZ-0007 · CHF 14.00');
+    expect(conversation.turns.find((turn) => turn.bargeIn)).toBeDefined();
+  });
+
+  it('times every turn from the start of the call', () => {
+    const [conversation = missing()] = buildConversations([
+      event('USER', '"pronto"', 'call-1', 'DEBUG'),
+      event('AGENT', '"Mi dica."', 'call-1', 'DEBUG')
+    ]);
+    expect(conversation.turns.map((turn) => turn.offsetMs)).toEqual([0, 1000]);
+  });
 });

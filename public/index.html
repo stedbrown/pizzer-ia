@@ -11,36 +11,72 @@
   <header class="topbar">
     <a class="brand" href="#orders" aria-label="Pizzer-IA home">
       <span class="brand-mark">P</span>
-      <span><strong>PIZZER-IA</strong><small>Console pizzeria</small></span>
+      <span><strong>PIZZER-IA</strong><small id="today">Console pizzeria</small></span>
     </a>
-    <div class="live" id="overallStatus"><i></i> Stato in verifica</div>
+    <nav class="tabs" aria-label="Sezioni">
+      <button data-tab="orders" class="active">Ordini <span id="orderCount" class="pill">0</span></button>
+      <button data-tab="conversations">Conversazioni</button>
+      <button data-tab="liveLogs">Live Logs</button>
+      <button data-tab="menu">Menu</button>
+      <button data-tab="telephony">Telefonia</button>
+    </nav>
+    <div class="topbar-right">
+      <div class="live" id="overallStatus"><i></i> Stato in verifica</div>
+      <button id="refresh" class="icon-button" title="Aggiorna" aria-label="Aggiorna">↻</button>
+    </div>
   </header>
 
   <main>
-    <section class="hero">
-      <div><p class="eyebrow">OGGI · <span id="today"></span></p><h1>Buon servizio.</h1><p>Gli ordini telefonici arrivano qui, già controllati e calcolati.</p></div>
-      <button id="refresh" class="secondary">↻ Aggiorna</button>
-    </section>
-
-    <nav class="tabs" aria-label="Sezioni">
-      <button data-tab="orders" class="active">Ordini <span id="orderCount">0</span></button>
-      <button data-tab="menu">Menu</button>
-      <button data-tab="telephony">Telefonia</button>
-      <button data-tab="conversations">Conversazioni</button>
-      <button data-tab="liveLogs">Live Logs</button>
-    </nav>
-
     <section id="orders" class="panel active" aria-live="polite">
       <div class="stats">
         <article><span>Da preparare</span><strong id="todoCount">—</strong></article>
-        <article><span>Pronti</span><strong id="readyCount">—</strong></article>
-        <article><span>Incasso ordini</span><strong id="revenue">—</strong></article>
+        <article><span>Pronti al ritiro</span><strong id="readyCount">—</strong></article>
+        <article><span>Ordini oggi</span><strong id="doneCount">—</strong></article>
+        <article class="stat-wide"><span>Incasso ordini</span><strong id="revenue">—</strong></article>
       </div>
       <div id="ordersList" class="orders-list"><div class="skeleton">Caricamento ordini…</div></div>
+      <details id="archive" class="archive">
+        <summary><span class="archive-label">Completati e annullati</span><span id="archiveCount" class="pill">0</span></summary>
+        <div id="archiveList" class="orders-list"></div>
+      </details>
+    </section>
+
+    <section id="conversations" class="panel" aria-live="polite">
+      <div class="section-heading">
+        <div><p class="eyebrow">QUALITÀ CONVERSAZIONALE</p><h2>Telefonate</h2></div>
+        <label class="toggle"><input type="checkbox" id="showTechnical"> Mostra dettagli tecnici</label>
+      </div>
+      <div id="conversationList" class="conversation-list"><div class="skeleton">Caricamento telefonate…</div></div>
+      <p class="log-note">Ricostruite dagli eventi già registrati · le trascrizioni esistono solo per le chiamate in Modalità test · numeri mascherati · conservate al massimo 24 ore</p>
+    </section>
+
+    <section id="liveLogs" class="panel" aria-live="polite">
+      <div class="section-heading log-heading">
+        <div><p class="eyebrow">DIAGNOSTICA LIVE</p><h2>Percorso chiamate</h2></div>
+        <div class="test-mode">
+          <span id="streamStatus" class="state neutral">Connessione…</span>
+          <button id="testMode" class="secondary">Abilita modalità test</button>
+          <small id="testModeCountdown">Disattivata</small>
+        </div>
+      </div>
+      <div class="log-toolbar">
+        <div class="log-filters" aria-label="Filtri log">
+          <button class="active" data-log-filter="all">Tutto</button>
+          <button data-log-filter="errors">Errori</button>
+          <button data-log-filter="telephony">Telefonia</button>
+          <button data-log-filter="openai">OpenAI</button>
+          <button data-log-filter="tool">Tool</button>
+          <button data-log-filter="backend">Backend</button>
+          <button data-log-filter="database">Database</button>
+        </div>
+        <input id="logSearch" type="search" placeholder="Cerca nel log…" aria-label="Cerca nel log">
+      </div>
+      <div id="liveLogList" class="live-log-list"><div class="empty">Apri questa sezione durante un test telefonico.</div></div>
+      <p class="log-note">Eventi strutturati recenti · numeri telefonici mascherati · nessun secret visualizzato</p>
     </section>
 
     <section id="menu" class="panel" aria-live="polite">
-      <div class="section-heading"><div><p class="eyebrow">LISTINO</p><h2>Menu della pizzeria</h2></div><p>Prezzi sempre determinati dal backend.</p></div>
+      <div class="section-heading"><div><p class="eyebrow">LISTINO</p><h2>Menu della pizzeria</h2></div><p>I prezzi sono sempre determinati dal backend.</p></div>
       <div id="menuList" class="menu-list"><div class="skeleton">Caricamento menu…</div></div>
     </section>
 
@@ -54,33 +90,6 @@
         <article><span>sipcall Classic</span><strong id="sipcallCost">—</strong><small>canone mensile attuale</small></article>
         <article><span>Totale complessivo</span><strong>N/D</strong><small>cambio USD/CHF e infrastruttura non inclusi</small></article>
       </div>
-    </section>
-
-    <section id="conversations" class="panel" aria-live="polite">
-      <div class="section-heading">
-        <div><p class="eyebrow">QUALITÀ CONVERSAZIONALE</p><h2>Telefonate</h2></div>
-      </div>
-      <div id="conversationList" class="conversation-list"><div class="empty">Nessuna telefonata registrata. Le trascrizioni esistono solo per le chiamate fatte in Modalità test.</div></div>
-      <p class="log-note">Ricostruite dagli eventi già registrati · numeri mascherati · conservate al massimo 24 ore</p>
-    </section>
-
-    <section id="liveLogs" class="panel" aria-live="polite">
-      <div class="section-heading log-heading">
-        <div><p class="eyebrow">DIAGNOSTICA LIVE</p><h2>Percorso chiamate</h2></div>
-        <div class="test-mode"><span id="streamStatus" class="state neutral">Connessione…</span><button id="testMode" class="secondary">Abilita modalità test</button><small id="testModeCountdown">Disattivata</small></div>
-      </div>
-      <div class="log-filters" aria-label="Filtri log">
-        <button class="active" data-log-filter="all">Tutto</button>
-        <button data-log-filter="telephony">Telefonia</button>
-        <button data-log-filter="openai">OpenAI</button>
-        <button data-log-filter="backend">Backend</button>
-        <button data-log-filter="tool">Tool</button>
-        <button data-log-filter="database">Database</button>
-        <button data-log-filter="errors">Errori</button>
-      </div>
-      <div class="log-table-head"><span>Ora</span><span>Source</span><span>Level</span><span>Messaggio</span><span>Call ID</span></div>
-      <div id="liveLogList" class="live-log-list"><div class="empty">Apri questa sezione durante un test telefonico.</div></div>
-      <p class="log-note">Eventi strutturati recenti · numeri telefonici mascherati · nessun secret visualizzato</p>
     </section>
   </main>
   <div id="toast" role="status"></div>

@@ -95,8 +95,21 @@ export type LogSource = 'ASTERISK' | 'SIPCALL' | 'SIP' | 'CALL' | 'RTP' | 'HEART
 
 export interface ConversationTurn {
   at: string;
+  offsetMs: number;
   role: 'customer' | 'agent' | 'tool' | 'system';
   text: string;
+  /** Attesa fra la fine del parlato del cliente e l'inizio della risposta. */
+  latencyMs?: number;
+  bargeIn?: boolean;
+}
+
+export interface ConversationMetrics {
+  customerTurns: number;
+  agentTurns: number;
+  toolCalls: number;
+  bargeIns: number;
+  avgResponseMs?: number;
+  slowestResponseMs?: number;
 }
 
 export interface Conversation {
@@ -105,6 +118,8 @@ export interface Conversation {
   endedAt: string;
   durationSeconds: number;
   outcome: 'confermato' | 'trasferita' | 'in corso' | 'chiusa';
+  headline?: string;
+  metrics: ConversationMetrics;
   turns: ConversationTurn[];
 }
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
