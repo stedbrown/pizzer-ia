@@ -209,7 +209,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 38px var(--s4) 72px; }
 .slot em { color: var(--faint); font-style: normal; }
 .closed-label { color: var(--faint); font-size: 12.5px; }
 .save-bar {
-  position: sticky; bottom: var(--s3); display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   gap: var(--s3); background: var(--ink); color: #fff; border-radius: var(--radius);
   padding: 11px var(--s3); margin-bottom: var(--s3); font-size: 13px;
 }
@@ -324,6 +324,11 @@ main { max-width: 1280px; margin: 0 auto; padding: 38px var(--s4) 72px; }
   .stats, .info-grid { grid-template-columns: repeat(2, 1fr); }
   .split { grid-template-columns: 1fr; }
   .grid-fields { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 1100px) and (min-width: 721px) {
+  .topbar { flex-wrap: wrap; gap: 0 var(--s3); padding-top: 9px; min-height: 0; }
+  .tabs { order: 3; width: 100%; justify-content: center; border-top: 1px solid var(--line); }
+  .tabs button { padding: 11px 12px; }
 }
 @media (max-width: 720px) {
   .topbar { flex-wrap: wrap; gap: 0 var(--s3); padding: var(--s2) var(--s3); min-height: 0; }
