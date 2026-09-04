@@ -57,8 +57,10 @@ npm run check
 | `OPENAI_API_KEY` | per chiamate | Chiave del progetto OpenAI |
 | `OPENAI_PROJECT_ID` | per SIP | Project ID usato nella SIP URI |
 | `OPENAI_WEBHOOK_SECRET` | per webhook | Signing secret del webhook OpenAI |
-| `OPENAI_REALTIME_MODEL` | no | Modello Realtime; default `gpt-realtime-2.1-mini`, usare `gpt-realtime-2.1` per il test qualità |
+| `OPENAI_REALTIME_MODEL` | no | Modello Realtime; default `gpt-realtime-2.1`, usare `gpt-realtime-2.1-mini` per la variante rapida ed economica |
 | `OPENAI_VOICE` | no | Default `marin` |
+| `OPENAI_TURN_DETECTION` | no | `server_vad` (default collaudato) oppure `semantic_vad` per l'A/B sulle pause |
+| `OPENAI_VAD_EAGERNESS` | no | Solo con `semantic_vad`: `low`, `medium` (default), `high` |
 | `OPENAI_GREETING` | no | Saluto iniziale breve, default `Pizzeria, buongiorno! Mi dica.` |
 | `LARGE_ORDER_THRESHOLD` | no | Da questa quantità l'AI propone il passaggio umano; default e massimo operativo `20` |
 | `HEARTBEAT_SECRET` | per monitoraggio | Token dedicato Asterisk → backend |
@@ -92,13 +94,17 @@ Non si registra audio. Il caller ID viene usato solo come recapito operativo e n
 
 ### Modello e qualità conversazionale
 
-Il modello si sceglie in un solo punto tramite `OPENAI_REALTIME_MODEL`, quindi l'A/B test non richiede modifiche al codice:
+Il modello si sceglie in un solo punto tramite `OPENAI_REALTIME_MODEL` (default in `src/realtime.ts`), quindi l'A/B test non richiede modifiche al codice:
 
-- `gpt-realtime-2.1-mini`: baseline rapida ed economica;
-- `gpt-realtime-2.1`: variante da provare per maggiore qualità e capacità di seguire istruzioni;
-- `gpt-realtime-1.5`: alternativa indicata dal catalogo OpenAI come modello voice di riferimento; è documentata ma non viene selezionata automaticamente.
+- `gpt-realtime-2.1`: default attuale, il migliore per instruction following, tool use e gestione delle interruzioni;
+- `gpt-realtime-2.1-mini`: baseline rapida ed economica, pienamente supportata;
+- `gpt-realtime-1.5`: indicato dal catalogo OpenAI come modello voice di riferimento; documentato ma non selezionato automaticamente. Non è un modello reasoning, quindi `parallel_tool_calls` viene disattivato in automatico.
 
-Il VAD usa `server_vad`, `silence_duration_ms: 550` e `interrupt_response: true`. Questi valori, già adatti a una telefonata normale, restano invariati: il test reale deve verificare il barge-in prima di qualsiasi ulteriore tuning.
+Una risposta parlata per turno: il backend consegna tutti i `function_call_output` di un turno e invia un solo `response.create`, quando nessuna response è attiva e il cliente non sta parlando (`ResponseScheduler`). Prima ogni singolo tool generava un turno vocale a sé, ed era la causa principale dell'effetto questionario.
+
+Gli output dei tool vengono ridotti prima di tornare al modello (`toolOutputForModel`): le mutazioni dell'ordine restituiscono righe, `line_id` e campi già noti, ma **non** prezzi né totale. Il totale arriva solo da `calculate_total` e `get_order_summary`. Il calcolo resta interamente nel backend: qui si filtra soltanto.
+
+Il VAD resta `server_vad` con `silence_duration_ms: 550` e `interrupt_response: true`, valori già collaudati sulla linea reale. Per provare il turn detection semantico, che attende più a lungo quando il cliente sta ancora pensando, basta `OPENAI_TURN_DETECTION=semantic_vad` (timeout massimi indicativi: `low` 8s, `medium` 4s, `high` 2s). Nessun altro parametro audio è stato toccato.
 
 Checklist manuale per una chiamata in Modalità test:
 
