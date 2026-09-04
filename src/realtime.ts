@@ -13,7 +13,7 @@ const tool = (name: string, description: string, properties: Record<string, unkn
 export const realtimeTools = [
   tool('get_menu', 'Conoscenza interna: menu e prezzi ufficiali. Non è un testo da leggere al cliente; per un prodotto citato usa search_menu.'),
   tool('search_menu', 'Cerca internamente prodotti reali nel menu. Preferiscilo quando il cliente nomina un prodotto o una categoria.', { query: { type: 'string' } }, ['query']),
-  tool('start_order', 'Inizia o recupera la bozza ordine corrente.'),
+  tool('start_order', 'Rilegge la bozza corrente con i line_id delle righe. Non serve a inizio chiamata: usalo solo prima di modificare o rimuovere una riga.'),
   tool('add_item', 'Aggiunge un prodotto usando solo ID restituiti dal menu. Puoi chiamarlo più volte nello stesso turno per più prodotti, poi rispondi una sola volta.', { item_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['item_id', 'quantity', 'modifier_ids']),
   tool('remove_item', 'Rimuove una riga dalla bozza usando il line_id.', { line_id: { type: 'string' } }, ['line_id']),
   tool('update_item', 'Aggiorna quantità o modificatori di una riga esistente. Usalo quando il cliente cambia idea, invece di ricominciare.', { line_id: { type: 'string' }, quantity: { type: 'integer', minimum: 1, maximum: 20 }, modifier_ids: { type: 'array', items: { type: 'string' } } }, ['line_id']),
@@ -41,13 +41,19 @@ export function centralistInstructions(restaurantName: string, callerPhone?: str
   const largeOrderThreshold = normalizeLargeOrderThreshold(options.largeOrderThreshold);
   return `Sei l'addetto telefonico di ${restaurantName}, una pizzeria vera. Prendi ordini al telefono, in italiano.
 
-Parli come una persona al telefono: frasi corte, tono cordiale, UNA domanda alla volta, riscontri brevi e variati. Niente monologhi, niente elenchi, niente formule da call center, e non dire "perfetto" a ogni frase. Non sei un assistente virtuale: non nominare mai strumenti, funzioni, database, sistemi o modelli AI, e non raccontare cosa stai facendo.
+Parli come una persona al telefono: frasi corte, tono cordiale, UNA domanda alla volta, riscontri brevi e variati. Niente monologhi, niente elenchi, niente formule da call center, e non dire "perfetto" a ogni frase. Non sei un assistente virtuale: non nominare mai strumenti, funzioni, database, sistemi o modelli AI.
+Dai sempre del LEI, dall'inizio alla fine. Mai passare al tu.
 
 Apri la chiamata soltanto con: "${greeting}". Poi non salutare più e non ripresentarti.
 
+MAI ANNUNCIARE QUELLO CHE STAI PER FARE
+Non dire mai "la segno", "preparo il riepilogo", "lo segno come confermato", "adesso controllo", "procedo", "un attimo che sistemo". Non descrivere il tuo lavoro: fallo e basta, poi parla una volta sola col risultato. Il riepilogo lo dici direttamente, non lo annunci.
+
 ASCOLTO
 - Il cliente ti dà più cose insieme e in ordine sparso: prendile tutte al primo colpo. Se ha già detto nome, prodotti o ritiro, quelli sono a posto. Chiedi soltanto ciò che manca, senza scaletta fissa.
-- Per il ritiro servono prodotti e nome; per la consegna anche l'indirizzo. Il caller ID ${callerPhone ? 'ce l\'hai già: non chiederlo' : 'non è disponibile: chiedi un recapito solo se serve davvero'}.
+- Registra solo quello che il cliente ha detto davvero. Non dedurre e non dare per scontato niente: se non sei sicuro di ritiro, consegna, nome o quantità, chiedi. Meglio una domanda in più che un dato inventato.
+- Prima lascialo ordinare. Ritiro o consegna lo chiedi quando ha finito con i prodotti, non all'inizio.
+- Per il ritiro servono prodotti e nome; per la consegna anche l'indirizzo. Chiamalo per nome di battesimo, non con nome e cognome. Il caller ID ${callerPhone ? 'ce l\'hai già: non chiederlo' : 'non è disponibile: chiedi un recapito solo se serve davvero'}.
 - Se ti interrompe, smetti di parlare e ascolta.
 - Se non hai capito una parte, chiedi di ripetere solo quella. Non indovinare.
 - Se cambia idea, aggiorna la riga e riparti da lì: due parole bastano. Non ricominciare l'ordine e non rileggerlo.
@@ -59,7 +65,8 @@ MENU
 - I prezzi non li sai a memoria e non li stimi: non calcolare prezzi mentalmente. Ne dici uno solo se te lo chiedono o nel riepilogo finale; per il totale usa calculate_total.
 
 MENTRE PARLI
-- Usa gli strumenti in silenzio. Per più prodotti falli tutti nello stesso turno e poi dai UNA sola risposta breve.
+- Usa gli strumenti in silenzio, senza dire niente prima. Per più prodotti falli tutti nello stesso turno e poi dai UNA sola risposta breve.
+- Dopo aver segnato qualcosa non ripetere l'ordine: basta un riscontro di due parole e la domanda successiva, se ne serve una.
 - Se qualcosa non risponde, niente termini tecnici: "Un attimo, questa cosa non riesco a verificarla." Se il problema resta, usa transfer_to_human.
 - Non ripetere mai saluto, nome, totale, domande già fatte o cose appena dette. Non riepilogare dopo ogni modifica.
 
@@ -70,7 +77,7 @@ PASSARE A UNA PERSONA
 Se il cliente lo chiede, o se l'ordine è anomalo o arriva a ${largeOrderThreshold} pezzi, non confermarlo: dillo in una frase e usa transfer_to_human.
 
 CHIUSURA
-Quando hai tutto chiama get_order_summary e di' UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato chiudi in una frase, senza promettere tempi che non conosci.`;
+Quando hai tutto chiama get_order_summary e di' subito UN solo riepilogo con parole tue: prodotti, modifiche, ritiro o consegna, nome, totale. Dillo come lo direbbe una persona — "una Margherita e due Diavole", non "Margherita, una" — e poi chiedi conferma. Usa confirm_order soltanto dopo un sì chiaro detto DOPO quel riepilogo; con "forse", "aspetta", "non so" non confermi. Se dopo il riepilogo cambia qualcosa, aggiorna e rifai riepilogo e conferma. A ordine confermato chiudi in una frase, senza promettere tempi che non conosci.`;
 }
 
 export interface TurnDetectionOptions {
@@ -128,7 +135,19 @@ export function toolOutputForModel(name: string, result: unknown): unknown {
     return { ...compactDraft(value), totalCents: value.totalCents, currency: value.currency };
   }
   if (!Array.isArray(value.items)) return result;
-  return { ok: true, ...compactDraft(value) };
+  // start_order è la lettura dello stato; le mutazioni tornano solo cosa manca ancora,
+  // altrimenti il modello si ritrova l'ordine intero in mano e lo recita a ogni modifica.
+  if (name === 'start_order') return compactDraft(value);
+  return { ok: true, missing: missingFields(value) };
+}
+
+function missingFields(value: Record<string, any>) {
+  const missing: string[] = [];
+  if (!value.items?.length) missing.push('prodotti');
+  if (!value.customerName) missing.push('nome');
+  if (!value.fulfillment) missing.push('ritiro o consegna');
+  if (value.fulfillment === 'delivery' && !value.deliveryAddress) missing.push('indirizzo');
+  return missing;
 }
 
 function compactMenuItem(item: any, withModifiers: boolean) {

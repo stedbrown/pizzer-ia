@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, MonthlyUsage, NewLiveLogEvent, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
+import { matchesMenuQuery } from './menu-search.js';
 
 export interface Store {
   health(): Promise<boolean>;
@@ -60,8 +61,7 @@ export class MemoryStore implements Store {
   async health() { return true; }
   async restaurantForDid(did?: string) { return !did || did.includes(DEMO_DID) ? { id: DEMO_RESTAURANT_ID, name: 'Pizzer-IA Demo' } : undefined; }
   async getMenu(restaurantId: string, query?: string, includeInactive = false) {
-    const q = query?.trim().toLocaleLowerCase('it-CH');
-    return this.menu.filter((item) => item.restaurantId === restaurantId && (includeInactive || item.active) && (!q || item.name.toLocaleLowerCase('it-CH').includes(q)));
+    return this.menu.filter((item) => item.restaurantId === restaurantId && (includeInactive || item.active) && (!query || matchesMenuQuery(item, query)));
   }
   async updateMenuItem(restaurantId: string, itemId: string, patch: { name?: string; priceCents?: number; active?: boolean }) {
     const item = this.menu.find((x) => x.restaurantId === restaurantId && x.id === itemId);

@@ -53,6 +53,15 @@ describe('Realtime voice agent', () => {
     expect(centralistInstructions('Pizzeria Test')).toContain('non si propongono MAI');
   });
 
+  it('fixes what the first real call got wrong', () => {
+    const prompt = centralistInstructions('Pizzeria Test');
+    expect(prompt).toContain('Dai sempre del LEI');                                   // register misto tu/lei
+    expect(prompt).toContain('MAI ANNUNCIARE QUELLO CHE STAI PER FARE');              // "preparo il riepilogo..."
+    expect(prompt).toContain('Non dedurre e non dare per scontato niente');           // set_fulfillment inventato
+    expect(prompt).toContain('Ritiro o consegna lo chiedi quando ha finito');         // domanda troppo presto
+    expect(prompt).toContain('nome di battesimo');                                    // "Stefano Vananti"
+  });
+
   it('supports configurable greeting and large-order fallback', () => {
     const prompt = centralistInstructions('Pizzeria Test', undefined, { greeting: 'Pizzeria, buonasera! Cosa le preparo?', largeOrderThreshold: 12 });
     expect(prompt).toContain('Pizzeria, buonasera! Cosa le preparo?');
@@ -89,12 +98,20 @@ describe('Realtime voice agent', () => {
 });
 
 describe('Tool output shaping', () => {
-  it('never sends prices or totals back after a plain order change', () => {
-    const output: any = toolOutputForModel('add_item', draftResult);
-    expect(output.ok).toBe(true);
+  it('answers an order change with what is still missing, not with the order', () => {
+    const output: any = toolOutputForModel('add_item', { ...draftResult, fulfillment: undefined });
+    expect(output).toEqual({ ok: true, missing: ['ritiro o consegna'] });
+    expect(JSON.stringify(output)).not.toContain('Margherita');
     expect(JSON.stringify(output)).not.toContain('4800');
-    expect(output).not.toHaveProperty('totalCents');
-    expect(output.lines[0]).not.toHaveProperty('unitPriceCents');
+  });
+
+  it('lists every field the agent still has to ask for', () => {
+    expect(toolOutputForModel('set_customer_name', { items: [], customerName: 'Stefano' }))
+      .toEqual({ ok: true, missing: ['prodotti', 'ritiro o consegna'] });
+    expect(toolOutputForModel('set_fulfillment', { ...draftResult, fulfillment: 'delivery', deliveryAddress: undefined }))
+      .toEqual({ ok: true, missing: ['indirizzo'] });
+    expect(toolOutputForModel('set_delivery_address', { ...draftResult, fulfillment: 'delivery', deliveryAddress: 'Via Test 1' }))
+      .toEqual({ ok: true, missing: [] });
   });
 
   it('puts no spoken instructions inside tool results', () => {
@@ -105,8 +122,8 @@ describe('Tool output shaping', () => {
     }
   });
 
-  it('keeps the line ids and known fields so the agent can correct without restarting', () => {
-    const output: any = toolOutputForModel('update_item', draftResult);
+  it('hands back the line ids only when the agent rereads the draft', () => {
+    const output: any = toolOutputForModel('start_order', draftResult);
     expect(output).not.toHaveProperty('hint');
     expect(output.lines).toEqual([
       { line_id: 'line-1', name: 'Diavola', quantity: 2 },

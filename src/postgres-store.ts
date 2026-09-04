@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { CallUsage, DraftOrder, IncomingCall, LiveLogEvent, MenuItem, Modifier, MonthlyUsage, NewLiveLogEvent, OrderStatus, OrderView, TelephonyHeartbeat, TelephonyStatus } from './types.js';
 import type { Store } from './store.js';
+import { menuSearchTerms } from './menu-search.js';
 
 export class PostgresStore implements Store {
   constructor(private pool: pg.Pool) {}
@@ -18,7 +19,11 @@ export class PostgresStore implements Store {
     const values: unknown[] = [restaurantId];
     let where = 'mi.restaurant_id = $1';
     if (!includeInactive) where += ' AND mi.active';
-    if (query) { values.push(`%${query}%`); where += ` AND mi.name ILIKE $${values.length}`; }
+    const terms = query ? menuSearchTerms(query) : [];
+    if (terms.length) {
+      values.push(terms.map((term) => `%${term}%`));
+      where += ` AND (mi.name ILIKE ANY($${values.length}::text[]) OR COALESCE(mi.description,'') ILIKE ANY($${values.length}::text[]))`;
+    }
     const result = await this.pool.query(`
       SELECT mi.id, mi.restaurant_id, mi.name, mi.description, mi.price_cents, mi.active,
         COALESCE(jsonb_agg(jsonb_build_object('id', mm.id, 'name', mm.name, 'priceCents', mm.price_cents, 'active', mm.active)
