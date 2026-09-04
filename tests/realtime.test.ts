@@ -28,24 +28,29 @@ describe('Realtime voice agent', () => {
     expect(prompt).toContain('Pizzeria, buongiorno! Mi dica.');
     expect(prompt).toContain('UNA domanda alla volta');
     expect(prompt).toContain('Chiedi soltanto ciò che manca');
-    expect(prompt).toContain('NON elencare spontaneamente tutto il menu');
-    expect(prompt).toContain('NON riepilogare dopo ogni aggiunta o correzione');
+    expect(prompt).toContain('non elencare i prodotti spontaneamente');
+    expect(prompt).toContain('Non riepilogare dopo ogni modifica');
     expect(prompt).toContain('non calcolare prezzi mentalmente');
-    expect(prompt).toContain('confirm_order soltanto dopo un sì inequivocabile');
-    expect(prompt).toContain('caller ID è già disponibile al backend: non chiederlo');
+    expect(prompt).toContain('confirm_order soltanto dopo un sì chiaro');
+    expect(prompt).toContain('Il caller ID ce l\'hai già: non chiederlo');
     expect(prompt).not.toContain('Sono l\'assistente virtuale');
   });
 
-  it('covers the manual call scenarios in the prompt', () => {
+  it('covers the manual call scenarios without scripted lines the agent can parrot', () => {
     const prompt = centralistInstructions('Pizzeria Test');
-    expect(prompt).toContain('Due Diavole e una Margherita senza mozzarella');           // A: ordine diretto
-    expect(prompt).toContain('No aspetta, una Diavola sola');                             // B: cambio idea
-    expect(prompt).toContain('Quella purtroppo non ce l\'abbiamo');                       // C: prodotto inesistente
-    expect(prompt).toContain('Le va qualcosa di piccante o preferisce restare sul classico?'); // D: indeciso
-    expect(prompt).toContain('smetti subito di parlare e ascolta');                       // E: interruzione
-    expect(prompt).toContain('Bene grazie, mi dica pure');                                // F: chiacchiera
-    expect(prompt).toContain('Certo, un momento.');                                       // H: passaggio a persona
+    expect(prompt).toContain('Chiedi soltanto ciò che manca');                            // A e F: niente questionario
+    expect(prompt).toContain('Se cambia idea, aggiorna la riga');                         // B
+    expect(prompt).toContain('Non inventare prodotti');                                   // C
+    expect(prompt).toContain('fai una domanda utile o proponi due cose');                 // D
+    expect(prompt).toContain('Se ti interrompe, smetti di parlare e ascolta');            // E
+    expect(prompt).toContain('usa transfer_to_human');                                    // G e H
     expect(prompt).toContain('non è disponibile: chiedi un recapito solo se serve davvero');
+    expect(prompt).not.toMatch(/Cliente: ".*" → Tu:/);
+    expect(prompt.split('\n').length).toBeLessThan(40);
+  });
+
+  it('never proposes add-ons on its own', () => {
+    expect(centralistInstructions('Pizzeria Test')).toContain('non si propongono MAI');
   });
 
   it('supports configurable greeting and large-order fallback', () => {
@@ -90,11 +95,19 @@ describe('Tool output shaping', () => {
     expect(JSON.stringify(output)).not.toContain('4800');
     expect(output).not.toHaveProperty('totalCents');
     expect(output.lines[0]).not.toHaveProperty('unitPriceCents');
-    expect(output.hint).toContain('niente riepilogo');
+  });
+
+  it('puts no spoken instructions inside tool results', () => {
+    // Il modello legge ad alta voce il testo che riceve: nei risultati non deve finire prosa.
+    for (const name of ['add_item', 'get_order_summary', 'calculate_total', 'confirm_order', 'transfer_to_human', 'search_menu', 'get_menu']) {
+      const payload = JSON.stringify(toolOutputForModel(name, name.endsWith('_menu') ? [] : draftResult));
+      expect(payload).not.toMatch(/hint|instruction/i);
+    }
   });
 
   it('keeps the line ids and known fields so the agent can correct without restarting', () => {
     const output: any = toolOutputForModel('update_item', draftResult);
+    expect(output).not.toHaveProperty('hint');
     expect(output.lines).toEqual([
       { line_id: 'line-1', name: 'Diavola', quantity: 2 },
       { line_id: 'line-2', name: 'Margherita', quantity: 1, modifiers: ['senza mozzarella'] }
@@ -109,22 +122,21 @@ describe('Tool output shaping', () => {
     const summary: any = toolOutputForModel('get_order_summary', { ...draftResult, instruction: 'Leggi questo riepilogo al cliente e chiedi: Conferma l\'ordine?' });
     expect(summary.totalCents).toBe(4800);
     expect(summary).not.toHaveProperty('instruction');
-    expect(summary.hint).toContain('UNA sola volta');
   });
 
-  it('marks the menu as internal knowledge but keeps the ids the tools need', () => {
-    const menu: any = toolOutputForModel('search_menu', [
-      { id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante', active: true, restaurantId: 'r', modifiers: [{ id: 'mod-1', name: 'senza mozzarella', priceCents: 0, active: true }] }
-    ]);
-    expect(menu.items[0]).toEqual({ id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante', modifiers: [{ id: 'mod-1', name: 'senza mozzarella' }] });
-    expect(menu.hint).toContain('Non leggere questo elenco');
+  it('hides the add-ons while browsing and reveals them only on a targeted search', () => {
+    const item = { id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante', active: true, restaurantId: 'r', modifiers: [{ id: 'mod-1', name: 'senza mozzarella', priceCents: 0, active: true }] };
+    const browsed: any = toolOutputForModel('get_menu', [item]);
+    expect(browsed.items[0]).toEqual({ id: 'item-1', name: 'Diavola', priceCents: 1700, description: 'piccante' });
+    const searched: any = toolOutputForModel('search_menu', [item]);
+    expect(searched.items[0].modifiers).toEqual([{ id: 'mod-1', name: 'senza mozzarella' }]);
   });
 
   it('keeps confirmation and transfer results intact', () => {
     expect(toolOutputForModel('confirm_order', { orderNumber: 'A-12', totalCents: 4800, status: 'CONFIRMED' }))
       .toMatchObject({ orderNumber: 'A-12', totalCents: 4800, status: 'CONFIRMED' });
     expect(toolOutputForModel('transfer_to_human', { available: true, message: 'Trasferimento in corso' }))
-      .toMatchObject({ available: true, hint: expect.stringContaining('un momento') });
+      .toEqual({ available: true, message: 'Trasferimento in corso' });
     expect(toolOutputForModel('add_item', { error: 'Articolo non disponibile: item-9' })).toEqual({ error: 'Articolo non disponibile: item-9' });
   });
 
