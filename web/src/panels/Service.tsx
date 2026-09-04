@@ -3,6 +3,7 @@ import type { Callback, OpeningSlot, ServiceSettings } from '../../../src/types'
 import { api, type ServiceView } from '../api';
 import { clock, WEEKDAYS } from '../format';
 import { useAsync } from '../hooks';
+import { useLiveReload } from '../live';
 import { AsyncView, Badge, Field, SectionHeading, Toggle } from '../ui';
 
 function HoursEditor({ hours, onChange }: { hours: OpeningSlot[]; onChange: (hours: OpeningSlot[]) => void }) {
@@ -39,6 +40,8 @@ function HoursEditor({ hours, onChange }: { hours: OpeningSlot[]; onChange: (hou
 
 function Callbacks({ onCount }: { onCount: (count: number) => void }) {
   const state = useAsync<Callback[]>(() => api.callbacks(), { pollMs: 60_000 });
+  useLiveReload(state.reload, (event) => event.source === 'TOOL' && event.message.startsWith('request_callback')
+    || event.source === 'DB' && event.message === 'Richiamo segnato come completato');
   const open = (state.data ?? []).filter((callback) => !callback.handledAt);
   useEffect(() => onCount(open.length), [open.length, onCount]);
   if (!state.data?.length) return null;
@@ -63,6 +66,7 @@ function Callbacks({ onCount }: { onCount: (count: number) => void }) {
 
 export function ServicePanel({ onCallbacks }: { onCallbacks: (count: number) => void }) {
   const state = useAsync<ServiceView>(() => api.service());
+  useLiveReload(state.reload, (event) => event.source === 'BACKEND' && event.message === 'Impostazioni di servizio aggiornate');
   const [draft, setDraft] = useState<ServiceSettings>();
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (state.data) setDraft(state.data.settings); }, [state.data]);
@@ -77,17 +81,20 @@ export function ServicePanel({ onCallbacks }: { onCallbacks: (count: number) => 
     <AsyncView state={state}>
       {(view) => {
         const settings = draft ?? view.settings;
-        const dirty = JSON.stringify(settings) !== JSON.stringify(view.settings);
+        const needsActivation = !view.settings.configured;
+        const dirty = needsActivation || JSON.stringify(settings) !== JSON.stringify(view.settings);
         const patch = (change: Partial<ServiceSettings>) => setDraft({ ...settings, ...change });
         return (
           <>
             <SectionHeading eyebrow="SERVIZIO" title="Orari e tempi">
               <div className="now">
-                <Badge tone={view.status.open ? 'good' : 'bad'}>{view.status.open ? 'Aperto adesso' : 'Chiuso adesso'}</Badge>
+                <Badge tone={!view.status.configured ? 'warn' : view.status.open ? 'good' : 'bad'}>
+                  {!view.status.configured ? 'Da confermare' : view.status.open ? 'Aperto adesso' : 'Chiuso adesso'}
+                </Badge>
                 <small>
                   Ora locale {view.status.localTime}
-                  {view.status.open && view.status.closesAt ? ` · si chiude alle ${view.status.closesAt}` : ''}
-                  {!view.status.open && view.status.opensAt ? ` · si riapre ${view.status.opensAt}` : ''}
+                  {view.status.configured && view.status.open && view.status.closesAt ? ` · si chiude alle ${view.status.closesAt}` : ''}
+                  {view.status.configured && !view.status.open && view.status.opensAt ? ` · si riapre ${view.status.opensAt}` : ''}
                 </small>
               </div>
             </SectionHeading>
@@ -125,10 +132,12 @@ export function ServicePanel({ onCallbacks }: { onCallbacks: (count: number) => 
 
             {dirty ? (
               <div className="save-bar">
-                <span>Modifiche non salvate — l'agente usa ancora i valori precedenti.</span>
+                <span>{needsActivation
+                  ? 'Controlli questi valori: finché non li conferma, l’agente non comunica orari o tempi e non conferma ordini.'
+                  : 'Modifiche non salvate — l’agente usa ancora i valori precedenti.'}</span>
                 <div className="save-actions">
                   <button className="link ghost" onClick={() => setDraft(view.settings)} disabled={saving}>Annulla</button>
-                  <button className="primary" disabled={saving} onClick={save}>{saving ? 'Salvo…' : 'Salva impostazioni'}</button>
+                  <button className="primary" disabled={saving} onClick={save}>{saving ? 'Salvo…' : needsActivation ? 'Conferma e attiva' : 'Salva impostazioni'}</button>
                 </div>
               </div>
             ) : null}

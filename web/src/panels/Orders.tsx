@@ -19,6 +19,7 @@ const NEXT: Partial<Record<OrderStatus, { status: OrderStatus; label: string }>>
   READY: { status: 'COMPLETED', label: 'Consegnato' }
 };
 const LATE_AFTER_MS = 20 * 60_000;
+const dateKey = (value: Date | string, timezone: string) => new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date(value));
 
 function OrderCard({ order, onChange }: { order: OrderView; onChange: (id: string, status: OrderStatus) => void }) {
   const [open, setOpen] = useState(false);
@@ -63,7 +64,7 @@ function OrderCard({ order, onChange }: { order: OrderView; onChange: (id: strin
   );
 }
 
-export function OrdersPanel({ state }: { state: AsyncState<OrderView[]> }) {
+export function OrdersPanel({ state, timezone = 'Europe/Zurich' }: { state: AsyncState<OrderView[]>; timezone?: string }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const change = async (id: string, status: OrderStatus) => {
     await api.setOrderStatus(id, status);
@@ -72,18 +73,19 @@ export function OrdersPanel({ state }: { state: AsyncState<OrderView[]> }) {
   return (
     <AsyncView state={state}>
       {(orders) => {
+        const todayOrders = orders.filter((order) => dateKey(order.createdAt, timezone) === dateKey(new Date(), timezone));
         const active = orders.filter((order) => order.status in RANK)
           .sort((a, b) => (RANK[a.status]! - RANK[b.status]!) || (Date.parse(a.createdAt) - Date.parse(b.createdAt)));
         const archived = orders.filter((order) => !(order.status in RANK))
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-        const revenue = orders.filter((order) => order.status !== 'CANCELLED').reduce((sum, order) => sum + order.totalCents, 0);
+        const revenue = todayOrders.filter((order) => order.status !== 'CANCELLED').reduce((sum, order) => sum + order.totalCents, 0);
         return (
           <>
             <div className="stats">
               <Stat label="Da preparare" value={orders.filter((o) => ['NEW', 'CONFIRMED', 'PREPARING'].includes(o.status)).length} />
               <Stat label="Pronti al ritiro" value={orders.filter((o) => o.status === 'READY').length} />
-              <Stat label="Completati oggi" value={orders.filter((o) => o.status === 'COMPLETED').length} />
-              <Stat label="Incasso ordini" value={money(revenue)} hint={plural(orders.length, 'ordine', 'ordini')} />
+              <Stat label="Completati oggi" value={todayOrders.filter((o) => o.status === 'COMPLETED').length} />
+              <Stat label="Incasso di oggi" value={money(revenue)} hint={plural(todayOrders.length, 'ordine', 'ordini')} />
             </div>
 
             {active.length

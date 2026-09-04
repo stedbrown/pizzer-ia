@@ -3,6 +3,7 @@ import type { Conversation, ConversationTurn } from '../../../src/types';
 import { api } from '../api';
 import { clockSeconds, latencyTone, maskPhones, plural, seconds } from '../format';
 import { useAsync } from '../hooks';
+import { useLiveReload } from '../live';
 import { AsyncView, Chip, SectionHeading, Toggle, type Tone } from '../ui';
 
 const OUTCOME: Record<Conversation['outcome'], Tone> = {
@@ -52,7 +53,8 @@ function Call({ call, defaultOpen }: { call: Conversation; defaultOpen: boolean 
 }
 
 export function ConversationsPanel() {
-  const state = useAsync<Conversation[]>(() => api.conversations());
+  const state = useAsync<Conversation[]>(() => api.conversations(), { pollMs: 60_000 });
+  useLiveReload(state.reload, (event) => Boolean(event.callId) && ['USER', 'AGENT', 'TOOL', 'ORDER', 'CALL'].includes(event.source));
   const [technical, setTechnical] = useState(false);
   return (
     <>

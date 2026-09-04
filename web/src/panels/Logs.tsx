@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { LiveLogEvent } from '../../../src/types';
 import { api } from '../api';
 import { clockSeconds, maskPhones } from '../format';
+import { useLive } from '../live';
 import { Badge, SectionHeading } from '../ui';
 
 const FILTERS = [
@@ -13,28 +13,17 @@ const CATEGORY: Record<string, string> = {
 };
 
 export function LogsPanel() {
-  const [events, setEvents] = useState<LiveLogEvent[]>([]);
+  const { events, connected: streaming } = useLive();
   const [filter, setFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
-  const [streaming, setStreaming] = useState(false);
   const [testUntil, setTestUntil] = useState<string>();
   const [remaining, setRemaining] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
-    api.logs().then((rows) => { if (alive) setEvents(rows); }).catch(() => undefined);
     api.testMode().then((state) => { if (alive) setTestUntil(state.expiresAt ?? undefined); }).catch(() => undefined);
-    const stream = new EventSource('/api/live-logs/stream');
-    stream.addEventListener('open', () => setStreaming(true));
-    stream.addEventListener('error', () => setStreaming(false));
-    stream.addEventListener('log', (event) => {
-      try {
-        const parsed = JSON.parse((event as MessageEvent).data) as LiveLogEvent;
-        setEvents((current) => current.some((item) => item.id === parsed.id) ? current : [...current, parsed].slice(-500));
-      } catch { /* riga malformata: si ignora */ }
-    });
-    return () => { alive = false; stream.close(); };
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
